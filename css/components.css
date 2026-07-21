@@ -2400,6 +2400,13 @@ button:focus-visible {
   margin-left: 0;
 }
 
+/* Inherit the fixed Tizen canvas instead of recalculating nested 100vh. */
+.tizen-tv .home-shell,
+.tizen-tv .home-main,
+.tizen-tv .home-sidebar {
+  height: 100%;
+}
+
 .library-main {
   padding: 48px 96px 64px;
 }

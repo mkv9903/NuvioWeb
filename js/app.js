@@ -257,7 +257,16 @@ function setupWebOsAppLifecycle() {
       if (document.body) {
         document.body.style.removeProperty("display");
       }
-      if (typeof Router.persistWebOsResumeRoute === "function") {
+      if (current === "debugConsole") {
+        await Router.navigate(
+          "home",
+          {},
+          {
+            replaceHistory: true,
+            skipStackPush: true
+          }
+        );
+      } else if (typeof Router.persistWebOsResumeRoute === "function") {
         Router.persistWebOsResumeRoute(current, Router.currentParams || {});
       }
       // With handlesRelaunch=true, webOS expects the app to explicitly request

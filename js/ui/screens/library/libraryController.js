@@ -388,7 +388,7 @@ export class LibraryController {
     };
   }
 
-  setState(patch) {
+  setState(patch, options = {}) {
     this.state = {
       ...this.state,
       ...patch
@@ -424,7 +424,11 @@ export class LibraryController {
       this.state.lastFocusedPosterKey = firstItem ? `${firstItem.type}:${firstItem.id}` : null;
       persistedPosterFocusKey = this.state.lastFocusedPosterKey;
     }
-    this.onChange(this.getState());
+    if (options.notify !== false) {
+      this.onChange(this.getState(), {
+        reason: options.reason || "state"
+      });
+    }
   }
 
   async reload(options = {}) {
@@ -526,6 +530,7 @@ export class LibraryController {
     this.state.visibleItems = sortForState(this.state.allItems, this.state);
     this.onChange(this.getState());
 
+    let hydrationChanged = false;
     void libraryRepository
       .hydrateItems(allItems, {
         shouldContinue: () => !this.disposed && reloadToken === this.reloadToken,
@@ -533,8 +538,15 @@ export class LibraryController {
           if (this.disposed || reloadToken !== this.reloadToken) {
             return;
           }
-          this.setState({ allItems: enrichedItems });
+          hydrationChanged = true;
+          this.setState({ allItems: enrichedItems }, { notify: false });
         }
+      })
+      .then((enrichedItems) => {
+        if (!hydrationChanged || this.disposed || reloadToken !== this.reloadToken) {
+          return;
+        }
+        this.setState({ allItems: enrichedItems }, { reason: "metadataHydration" });
       })
       .catch((error) => {
         if (!this.disposed && reloadToken === this.reloadToken) {

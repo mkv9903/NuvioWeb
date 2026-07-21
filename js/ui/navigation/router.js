@@ -54,6 +54,7 @@ const WEBOS_RESUME_ROUTE_TTL_MS = 20 * 60 * 1000;
 const TIZEN_ROUTE_RETURN_BACK_GUARD_MS = 700;
 const WEBOS_NON_RESTORABLE_ROUTES = new Set([
   ...NON_BACKSTACK_ROUTES,
+  "debugConsole",
   "player",
   "stream"
 ]);
@@ -393,7 +394,7 @@ export const Router = {
       // before the platform treats it as a request to exit the app.
       if (
         Platform.isWebOS() &&
-        this.current === "home" &&
+        (this.current === "home" || this.current === "profileSelection") &&
         !this.webOsHomeBackGuardInitialized
       ) {
         window.history.pushState(state, "");

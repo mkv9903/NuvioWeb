@@ -188,18 +188,29 @@ export const LibraryScreen = {
     });
   },
 
-  handleControllerChange(state = null) {
+  handleControllerChange(state = null, change = null) {
     const nextState = state || this.controller?.getState?.() || null;
-    const partialRefresh = this.partialContentRefresh;
-    if (
-      partialRefresh &&
+    const canRefreshLibraryContent =
       nextState &&
       !nextState.isLoading &&
       !nextState.isSyncing &&
       !nextState.showManageDialog &&
       !nextState.listEditorState &&
-      !nextState.showDeleteConfirm
-    ) {
+      !nextState.showDeleteConfirm;
+
+    if (change?.reason === "metadataHydration" && canRefreshLibraryContent) {
+      if (this.focusZone === "sidebar") {
+        this.pendingHydrationState = nextState;
+        return;
+      }
+      this.pendingHydrationState = null;
+      this.updateRenderedLibraryContent(nextState, { preservePickerRow: false });
+      return;
+    }
+
+    this.pendingHydrationState = null;
+    const partialRefresh = this.partialContentRefresh;
+    if (partialRefresh && canRefreshLibraryContent) {
       this.partialContentRefresh = null;
       this.updateRenderedLibraryContent(nextState, {
         preservePickerRow: partialRefresh.structureSignature === filterStructureSignature(nextState)
@@ -213,7 +224,9 @@ export const LibraryScreen = {
   async mount() {
     this.container = document.getElementById("library");
     ScreenUtils.show(this.container);
-    const controller = new LibraryController((state) => this.handleControllerChange(state));
+    const controller = new LibraryController((state, change) =>
+      this.handleControllerChange(state, change)
+    );
     this.controller = controller;
     this.libraryRouteEnterPending = true;
     this.sidebarProfile = await getSidebarProfileState();
@@ -236,6 +249,7 @@ export const LibraryScreen = {
     this.gridRows = [];
     this.lastPrivacyFocus = "private";
     this.partialContentRefresh = null;
+    this.pendingHydrationState = null;
 
     this.render();
     this.bindEvents();
@@ -1561,6 +1575,13 @@ export const LibraryScreen = {
       this.sidebarExpanded = false;
       setModernSidebarExpanded(this.container, false);
     }
+    if (this.pendingHydrationState) {
+      const pendingHydrationState = this.pendingHydrationState;
+      this.pendingHydrationState = null;
+      this.updateRenderedLibraryContent(pendingHydrationState, {
+        preservePickerRow: false
+      });
+    }
     const target =
       preferredNode ||
       (preferEntryPoint ? this.resolveMainEntryFocus() : null) ||
@@ -1907,6 +1928,7 @@ export const LibraryScreen = {
     this.pendingPosterOptionsFocusKey = "";
     this.suppressHoldMenuEnterUntilKeyUp = false;
     this.gridRows = [];
+    this.pendingHydrationState = null;
     this.controller?.dispose?.();
     this.controller = null;
     ScreenUtils.hide(this.container);

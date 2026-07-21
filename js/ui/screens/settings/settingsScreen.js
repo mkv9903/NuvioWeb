@@ -39,6 +39,16 @@ import { WatchProgressSyncService } from "../../../core/profile/watchProgressSyn
 import { AuthManager } from "../../../core/auth/authManager.js";
 import { SupabaseApi } from "../../../data/remote/supabase/supabaseApi.js";
 import { Platform } from "../../../platform/index.js";
+import {
+  FAST_HORIZONTAL_NAVIGATION_KEY,
+  ROTATED_DPAD_KEY,
+  isFastHorizontalNavigationEnabled,
+  shouldUseRotatedMapping
+} from "../../../platform/sharedKeys.js";
+import {
+  CW_DISPLAY_SNAPSHOT_KEY,
+  CW_ENRICHMENT_CACHE_KEY
+} from "../home/homeConstants.js";
 import { I18n } from "../../../i18n/index.js";
 import { PluginManager } from "../../../core/player/pluginManager.js";
 import { QrCodeGenerator } from "../../../core/qr/qrCodeGenerator.js";
@@ -68,7 +78,6 @@ import {
   setLegacySidebarExpanded
 } from "../../components/sidebarNavigation.js";
 
-const ROTATED_DPAD_KEY = "rotatedDpadMapping";
 const STRICT_DPAD_GRID_KEY = "strictDpadGridNavigation";
 const SETTINGS_UI_STATE_KEY = "settingsScreenUiState";
 const SETTINGS_RAIL_SCROLL_TARGET_RATIO = 0.42;
@@ -618,6 +627,11 @@ const SECTION_META = [
     subtitleKey: "settings.sections.trakt.subtitle"
   },
   {
+    id: "advanced",
+    labelKey: "settings_advanced",
+    subtitleKey: "settings_advanced_subtitle"
+  },
+  {
     id: "about",
     labelKey: "settings.sections.about.label",
     subtitleKey: "settings.sections.about.subtitle"
@@ -633,6 +647,7 @@ const SECTION_ICONS = {
   plugins: "build",
   integration: "link",
   streams: "style",
+  advanced: "tune",
   trakt: "trakt",
   about: "info"
 };
@@ -2084,6 +2099,7 @@ export const SettingsScreen = {
       persistedUiState.expandedSections || this.expandedSections
     );
     this.streamBadgePreviewSourceUrl = null;
+    this.advancedCacheCleared = false;
     this.optionDialog = this.optionDialog || null;
     this.textDialog = this.textDialog || null;
     this.dialogFocusIndex = Number.isFinite(this.dialogFocusIndex) ? this.dialogFocusIndex : 0;
@@ -2194,7 +2210,8 @@ export const SettingsScreen = {
       streamBadgeSettings: StreamBadgeSettingsStore.get(),
       debrid: DebridSettingsStore.get(),
       trakt: this.collectTraktModel(),
-      rotatedDpad: Boolean(LocalStore.get(ROTATED_DPAD_KEY, true)),
+      fastHorizontalNavigation: isFastHorizontalNavigationEnabled(),
+      rotatedDpad: shouldUseRotatedMapping(),
       strictDpadGrid: Boolean(LocalStore.get(STRICT_DPAD_GRID_KEY, true)),
       authState,
       accountSyncOverview: this.accountSyncOverview || null,
@@ -2934,7 +2951,6 @@ export const SettingsScreen = {
     this.actionMap.set("profiles:rememberLast", () => {
       ProfileManager.setRememberLastProfileEnabled(!ProfileManager.isRememberLastProfileEnabled());
     });
-
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "profiles"))}
       <div class="settings-group-card settings-profile-card">
@@ -2959,6 +2975,100 @@ export const SettingsScreen = {
               "Skip the profile picker at startup and use the last selected profile. Profiles with a PIN are always asked."
             ),
             checked: ProfileManager.isRememberLastProfileEnabled()
+          })}
+        </div>
+      </div>
+    `;
+  },
+
+  renderAdvancedSection(model) {
+    this.actionMap.set("advanced:fastHorizontalNavigation", () => {
+      LocalStore.set(
+        FAST_HORIZONTAL_NAVIGATION_KEY,
+        !isFastHorizontalNavigationEnabled()
+      );
+    });
+    this.actionMap.set("advanced:rememberLastProfile", () => {
+      ProfileManager.setRememberLastProfileEnabled(!ProfileManager.isRememberLastProfileEnabled());
+    });
+    this.actionMap.set("advanced:strictDpadGrid", () => {
+      LocalStore.set(STRICT_DPAD_GRID_KEY, !Boolean(LocalStore.get(STRICT_DPAD_GRID_KEY, true)));
+    });
+    this.actionMap.set("advanced:rotatedDpad", () => {
+      LocalStore.set(ROTATED_DPAD_KEY, !shouldUseRotatedMapping());
+    });
+    this.actionMap.set("advanced:clearContinueWatchingCache", () => {
+      LocalStore.remove(CW_ENRICHMENT_CACHE_KEY);
+      LocalStore.remove(CW_DISPLAY_SNAPSHOT_KEY);
+      this.advancedCacheCleared = true;
+    });
+
+    return `
+      ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "advanced"))}
+      <div class="settings-group-heading">
+        <div class="settings-group-title">${escapeHtml(t("advanced_section_performance", {}, "Performance & navigation"))}</div>
+      </div>
+      <div class="settings-group-card">
+        <div class="settings-stack">
+          ${this.renderToggleRow({
+            focusKey: "advanced:fastHorizontalNavigation",
+            title: t("advanced_fast_horizontal_navigation", {}, "Fast Horizontal Navigation"),
+            subtitle: t(
+              "advanced_fast_horizontal_navigation_subtitle",
+              {},
+              "Increase D-pad repeat speed in rows while keeping repeat throttling enabled."
+            ),
+            checked: Boolean(model.fastHorizontalNavigation)
+          })}
+          ${this.renderToggleRow({
+            focusKey: "advanced:rememberLastProfile",
+            title: t("advanced_remember_last_profile", {}, "Remember Last Profile"),
+            subtitle: t(
+              "advanced_remember_last_profile_subtitle",
+              {},
+              "Remember the last selected profile at startup. Profiles with a PIN are always requested."
+            ),
+            checked: ProfileManager.isRememberLastProfileEnabled()
+          })}
+          ${this.renderToggleRow({
+            focusKey: "advanced:strictDpadGrid",
+            title: t("advanced_strict_dpad_grid", {}, "Strict D-pad Grid Navigation"),
+            subtitle: t(
+              "advanced_strict_dpad_grid_subtitle",
+              {},
+              "Keep directional focus movement aligned to rows and columns when possible."
+            ),
+            checked: Boolean(model.strictDpadGrid)
+          })}
+          ${this.renderToggleRow({
+            focusKey: "advanced:rotatedDpad",
+            title: t("advanced_rotated_dpad", {}, "Rotated D-pad Mapping"),
+            subtitle: t(
+              "advanced_rotated_dpad_subtitle",
+              {},
+              "Swap directional key mapping for simulators or remotes that report rotated arrows."
+            ),
+            checked: Boolean(model.rotatedDpad)
+          })}
+        </div>
+      </div>
+      <div class="settings-group-heading">
+        <div class="settings-group-title">${escapeHtml(t("advanced_section_cache", {}, "Cache"))}</div>
+      </div>
+      <div class="settings-group-card">
+        <div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "advanced:clearContinueWatchingCache",
+            title: t("advanced_clear_cw_cache", {}, "Clear Continue Watching Cache"),
+            subtitle: this.advancedCacheCleared
+              ? t("advanced_clear_cw_cache_done", {}, "Cache cleared")
+              : t(
+                  "advanced_clear_cw_cache_subtitle",
+                  {},
+                  "Remove cached thumbnails, titles, and enrichment data for Continue Watching"
+                ),
+            icon: null,
+            disabled: Boolean(this.advancedCacheCleared)
           })}
         </div>
       </div>
@@ -5987,6 +6097,7 @@ export const SettingsScreen = {
     if (section.id === "streams") return this.renderStreamsSection(model);
     if (section.id === "playback") return this.renderPlaybackSection(model);
     if (section.id === "trakt") return this.renderTraktLauncher(model);
+    if (section.id === "advanced") return this.renderAdvancedSection(model);
     return this.renderAboutSection(model);
   },
 

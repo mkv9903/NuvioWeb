@@ -18,6 +18,7 @@ import { mdbListRepository } from "../../../data/repository/mdbListRepository.js
 import { ProfileManager } from "../../../core/profile/profileManager.js";
 import { AvatarRepository } from "../../../data/remote/supabase/avatarRepository.js";
 import { Platform } from "../../../platform/index.js";
+import { isFastHorizontalNavigationEnabled } from "../../../platform/sharedKeys.js";
 import { LocalStore } from "../../../core/storage/localStore.js";
 import { TMDB_API_KEY, YOUTUBE_PROXY_URL } from "../../../config.js";
 import { I18n } from "../../../i18n/index.js";
@@ -3214,6 +3215,14 @@ export const HomeScreen = {
   },
 
   getDirectionalRepeatThrottleMs(direction = null) {
+    if (
+      (direction === "left" || direction === "right") &&
+      isFastHorizontalNavigationEnabled()
+    ) {
+      // Match Android TV's fast-horizontal D-pad gate while preserving
+      // the existing vertical and constrained-runtime throttles.
+      return 48;
+    }
     if (!Platform.isBrowser()) {
       return direction === "up" || direction === "down"
         ? MODERN_HOME_CONSTANTS.verticalKeyRepeatThrottleMs

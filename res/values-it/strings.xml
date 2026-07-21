@@ -262,7 +262,7 @@
     <string name="settings_network">Velocità di rete</string>
     <string name="settings_network_subtitle">Diagnostica di latenza e download</string>
     <string name="settings_advanced">Avanzate</string>
-    <string name="settings_advanced_subtitle">Esegui diagnostica velocità di rete</string>
+    <string name="settings_advanced_subtitle">Prestazioni, navigazione, cache e diagnostica</string>
     <string name="network_speed_test_run">Avvia test di velocità</string>
     <string name="network_speed_test_running">Test di velocità in corso</string>
     <string name="network_speed_test_subtitle">Misura velocità di download e latenza</string>
@@ -288,6 +288,10 @@
     <string name="advanced_clear_cw_cache">Svuota Cache \"Continua a Guardare\"</string>
     <string name="advanced_clear_cw_cache_subtitle">Rimuovi miniature, titoli e dati arricchiti in cache per la sezione Continua a Guardare</string>
     <string name="advanced_clear_cw_cache_done">Cache svuotata</string>
+    <string name="advanced_strict_dpad_grid">Navigazione D-pad a Griglia Rigida</string>
+    <string name="advanced_strict_dpad_grid_subtitle">Mantiene il movimento del focus allineato a righe e colonne quando possibile.</string>
+    <string name="advanced_rotated_dpad">Mappatura D-pad Ruotata</string>
+    <string name="advanced_rotated_dpad_subtitle">Scambia la mappatura direzionale per simulatori o telecomandi che segnalano frecce ruotate.</string>
     <string name="settings_debug">Debug</string>
     <string name="settings_debug_subtitle">Strumenti per sviluppatori e feature flags</string>
     <string name="settings_plugins_section_subtitle">Gestisci repository, provider e stato dei plugin</string>
