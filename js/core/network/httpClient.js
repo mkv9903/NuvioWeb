@@ -17,6 +17,80 @@ function hasHeader(headers, name) {
   return Object.keys(headers || {}).some((key) => String(key).toLowerCase() === target);
 }
 
+// Save the original browser fetch before any overrides, at module scope.
+// This lets proxyFetch call the real fetch directly without hitting the interceptor.
+const _originalFetch = typeof window !== 'undefined' ? window.fetch.bind(window) : fetch;
+
+export async function proxyFetch(url, fetchInit) {
+  const cloudProxyUrl = typeof window !== 'undefined' ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL : null;
+  
+  if (cloudProxyUrl) {
+    const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(url)}`;
+    return await _originalFetch(targetUrl, fetchInit);
+  } else {
+    return (await fetchViaWebOsSupabaseProxy(url, fetchInit)) || (await _originalFetch(url, fetchInit));
+  }
+}
+
+// Global fetch interceptor for webOS to ensure ALL external API requests pass through proxy.
+// IMPORTANT: Only intercepts absolute external http(s):// URLs.
+// Skips: relative paths, same-origin assets, data:/blob: URLs, video streams, local network.
+if (typeof window !== 'undefined') {
+  window.fetch = async function(url, options) {
+    const cloudProxyUrl = window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL;
+    
+    if (cloudProxyUrl) {
+      const urlStr = String(url || "");
+      
+      // Only proxy absolute http(s) URLs — never relative paths, data:, blob:, etc.
+      const isAbsoluteHttp = /^https?:\/\//i.test(urlStr);
+      if (!isAbsoluteHttp) {
+        return _originalFetch(url, options);
+      }
+      
+      // Never proxy same-origin requests (the app's own bundled assets)
+      try {
+        if (new URL(urlStr).origin === window.location.origin) {
+          return _originalFetch(url, options);
+        }
+      } catch (e) {
+        // If URL parsing fails, don't proxy
+        return _originalFetch(url, options);
+      }
+      
+      // Never proxy requests already going to the proxy (prevent infinite loop)
+      if (urlStr.startsWith(cloudProxyUrl)) {
+        return _originalFetch(url, options);
+      }
+      
+      // Never proxy video streams or local network
+      let urlPath = "";
+      try {
+        urlPath = new URL(urlStr).pathname.toLowerCase();
+      } catch (e) {
+        urlPath = "";
+      }
+      
+      const isExcluded = urlPath.endsWith(".m3u8") || 
+                         urlPath.endsWith(".mp4") || 
+                         urlPath.endsWith(".mkv") || 
+                         urlPath.endsWith(".ts") || 
+                         urlStr.includes("127.0.0.1") || 
+                         urlStr.includes("localhost") ||
+                         urlStr.match(/^https?:\/\/(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[0-1]))\./);
+                         
+      if (isExcluded) {
+        return _originalFetch(url, options);
+      }
+      
+      // Route through Cloudflare proxy
+      const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(urlStr)}`;
+      return await _originalFetch(targetUrl, options);
+    }
+    return _originalFetch(url, options);
+  };
+}
+
 export async function httpRequest(url, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   const includeSessionAuth = options.includeSessionAuth !== false;
@@ -48,7 +122,7 @@ export async function httpRequest(url, options = {}) {
     headers
   };
 
-  let response = (await fetchViaWebOsSupabaseProxy(url, fetchInit)) || (await fetch(url, fetchInit));
+  let response = await proxyFetch(url, fetchInit);
 
   if (response.status === 401 && includeSessionAuth && SessionStore.refreshToken) {
     const refreshed = await AuthManager.refreshSessionIfNeeded({ force: true });
@@ -61,8 +135,7 @@ export async function httpRequest(url, options = {}) {
           Authorization: `Bearer ${SessionStore.accessToken}`
         }
       };
-      response =
-        (await fetchViaWebOsSupabaseProxy(url, retryInit)) || (await fetch(url, retryInit));
+      response = await proxyFetch(url, retryInit);
     }
   }
 

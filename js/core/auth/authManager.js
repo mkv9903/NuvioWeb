@@ -1,6 +1,7 @@
 import { AuthState } from "./authState.js";
 import { SessionStore } from "../storage/sessionStore.js";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../config.js";
+import { proxyFetch } from "../network/httpClient.js";
 
 function isJwtLike(token) {
   const value = String(token || "").trim();
@@ -119,7 +120,7 @@ class AuthManagerClass {
   // EMAIL LOGIN
   // ------------------------------------
   async signInWithEmail(email, password) {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    const res = await proxyFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -164,7 +165,7 @@ class AuthManagerClass {
 
     this.refreshPromise = (async () => {
       try {
-        const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        const res = await proxyFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -208,7 +209,7 @@ class AuthManagerClass {
   // ------------------------------------
 
   async startTvLoginSession(deviceNonce, deviceName, redirectBaseUrl) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/start_tv_login_session`, {
+    const res = await proxyFetch(`${SUPABASE_URL}/rest/v1/rpc/start_tv_login_session`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -229,7 +230,7 @@ class AuthManagerClass {
   }
 
   async pollTvLoginSession(code, deviceNonce) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/poll_tv_login_session`, {
+    const res = await proxyFetch(`${SUPABASE_URL}/rest/v1/rpc/poll_tv_login_session`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -249,7 +250,7 @@ class AuthManagerClass {
   }
 
   async exchangeTvLoginSession(code, deviceNonce) {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/tv-logins-exchange`, {
+    const res = await proxyFetch(`${SUPABASE_URL}/functions/v1/tv-logins-exchange`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -293,7 +294,7 @@ class AuthManagerClass {
       Authorization: `Bearer ${SessionStore.accessToken}`
     };
 
-    let res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_sync_owner`, {
+    let res = await proxyFetch(`${SUPABASE_URL}/rest/v1/rpc/get_sync_owner`, {
       method: "POST",
       headers: authHeaders
     });
@@ -301,7 +302,7 @@ class AuthManagerClass {
     if (res.status === 401) {
       const refreshed = await this.refreshSessionIfNeeded();
       if (refreshed) {
-        res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_sync_owner`, {
+        res = await proxyFetch(`${SUPABASE_URL}/rest/v1/rpc/get_sync_owner`, {
           method: "POST",
           headers: {
             ...authHeaders,
