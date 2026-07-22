@@ -1,0 +1,21 @@
+/* Home grid layout - fixed 5 columns for 1920px TV */
+.no-css-grid .home-screen-shell.home-layout-grid .home-grid-track {
+  display: flex;
+  flex-wrap: wrap;
+}
+.no-css-grid .home-screen-shell.home-layout-grid .home-grid-track > * {
+  width: 20%;
+  box-sizing: border-box;
+}
+
+/* Discover grid - fixed 5 columns */
+.no-css-grid .discover-grid { display: flex; flex-wrap: wrap; }
+.no-css-grid .discover-grid > * { width: 20%; box-sizing: border-box; }
+
+/* Library grid - fixed 5 columns */
+.no-css-grid .library-grid { display: flex; flex-wrap: wrap; }
+.no-css-grid .library-grid > * { width: 20%; box-sizing: border-box; }
+
+/* See All grid - fixed 5 columns */
+.no-css-grid .seeall-grid { display: flex; flex-wrap: wrap; }
+.no-css-grid .seeall-grid > * { width: 20%; box-sizing: border-box; }

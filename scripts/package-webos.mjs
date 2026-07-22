@@ -58,7 +58,7 @@ function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
   });
 
   return `<!DOCTYPE html>
-<html lang="en" class="no-flex-gap no-css-math no-backdrop-filter no-aspect-ratio">
+<html lang="en" class="no-flex-gap no-css-math no-backdrop-filter no-aspect-ratio no-css-grid">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -69,6 +69,7 @@ function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
   <link rel="stylesheet" href="css/layout.css" />
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/themes.css" />
+  <link rel="stylesheet" href="css/webos4-compat.css" />
 </head>
 <body>
   <script src="boot-guard.js"></script>

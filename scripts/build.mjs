@@ -369,6 +369,130 @@ function flexGapFallbackPlugin() {
 
 flexGapFallbackPlugin.postcss = true;
 
+function stickyPositionFallbackPlugin() {
+  return {
+    postcssPlugin: "sticky-position-fallback",
+    Declaration: {
+      position: (decl) => {
+        if (decl.value === "sticky") {
+          decl.cloneBefore({ value: "relative" });
+        }
+      }
+    }
+  };
+}
+stickyPositionFallbackPlugin.postcss = true;
+
+function scrollMarginLogicalPlugin() {
+  return {
+    postcssPlugin: "scroll-margin-logical-fallback",
+    Declaration(decl) {
+      if (decl.prop === "scroll-margin-block") {
+        decl.cloneBefore({ prop: "scroll-margin-top", value: decl.value });
+        decl.cloneBefore({ prop: "scroll-margin-bottom", value: decl.value });
+      } else if (decl.prop === "scroll-margin-inline") {
+        decl.cloneBefore({ prop: "scroll-margin-left", value: decl.value });
+        decl.cloneBefore({ prop: "scroll-margin-right", value: decl.value });
+      }
+    }
+  };
+}
+scrollMarginLogicalPlugin.postcss = true;
+
+function gridToFlexFallbackPlugin() {
+  return {
+    postcssPlugin: "grid-to-flex-fallback",
+    Declaration(decl) {
+      if (decl.prop !== "display" || decl.value !== "grid") return;
+      
+      const rule = decl.parent;
+      if (!rule || rule.type !== 'rule') return;
+      
+      let tCols = null;
+      let tRows = null;
+      rule.walkDecls("grid-template-columns", d => { tCols = d.value.trim(); });
+      rule.walkDecls("grid-template-rows", d => { tRows = d.value.trim(); });
+      
+      if (!tCols || tCols.includes("auto-fill") || tCols.includes("auto-fit")) return;
+      
+      const scopedSelectors = rule.selectors.map(s => `html.no-css-grid ${s}`);
+      const flexFallback = postcss.rule({ selectors: scopedSelectors });
+      flexFallback.append({ prop: "display", value: "flex" });
+      
+      // Parse columns
+      let cols = [];
+      if (tCols.startsWith("repeat(")) {
+        const match = tCols.match(/repeat\((\d+),\s*(.*)\)/);
+        if (match) {
+          const count = parseInt(match[1]);
+          const val = match[2];
+          for (let i = 0; i < count; i++) cols.push(val);
+        }
+      } else {
+        // split by space considering functions like minmax
+        let current = "";
+        let depth = 0;
+        for (let char of tCols) {
+          if (char === "(") depth++;
+          else if (char === ")") depth--;
+          else if (char === " " && depth === 0) {
+            if (current) cols.push(current);
+            current = "";
+            continue;
+          }
+          current += char;
+        }
+        if (current) cols.push(current);
+      }
+      
+      if (cols.length === 0) return;
+      
+      if (cols.length > 0 && cols.every(c => c === cols[0])) {
+        // Equal columns or single column
+        if (cols.length > 1) {
+            flexFallback.append({ prop: "flex-wrap", value: "wrap" });
+            const childRule = postcss.rule({ selectors: scopedSelectors.map(s => `${s} > *`) });
+            childRule.append({ prop: "width", value: `calc(100% / ${cols.length})` });
+            childRule.append({ prop: "box-sizing", value: "border-box" });
+            rule.after(flexFallback);
+            flexFallback.after(childRule);
+            return;
+        }
+      }
+      
+      // 2D grid handling for player-dialog-item
+      if (tRows) {
+        flexFallback.append({ prop: "flex-wrap", value: "wrap" });
+        rule.after(flexFallback);
+        return;
+      }
+      
+      // Mixed columns (e.g. Apx 1fr, 1fr auto, Afr Bfr)
+      rule.after(flexFallback);
+      // We append in reverse order so that after() puts them in the correct sequential order
+      for (let i = cols.length - 1; i >= 0; i--) {
+        const col = cols[i];
+        const nth = i === 0 ? "first-child" : (i === cols.length - 1 ? "last-child" : `nth-child(${i + 1})`);
+        const childRule = postcss.rule({ selectors: scopedSelectors.map(s => `${s} > :${nth}`) });
+        
+        if (col.includes("1fr") || col.includes("minmax(0, 1fr)")) {
+          childRule.append({ prop: "flex", value: "1" });
+          childRule.append({ prop: "min-width", value: "0" });
+        } else if (col === "auto") {
+          childRule.append({ prop: "flex", value: "0 0 auto" });
+        } else if (col.endsWith("fr")) {
+          const val = col.replace("fr", "");
+          childRule.append({ prop: "flex", value: val });
+        } else {
+          childRule.append({ prop: "flex", value: `0 0 ${col}` });
+        }
+        flexFallback.after(childRule);
+      }
+    }
+  };
+}
+gridToFlexFallbackPlugin.postcss = true;
+
 async function buildCSS() {
   console.log("processing CSS with PostCSS (legacy support)...");
   const cssDir = path.join(rootDir, "css");
@@ -389,6 +513,9 @@ async function buildCSS() {
       legacyDeclarationFallbackPlugin(),
       unsupportedSelectorFallbackPlugin(),
       flexGapFallbackPlugin(),
+      gridToFlexFallbackPlugin(),
+      stickyPositionFallbackPlugin(),
+      scrollMarginLogicalPlugin(),
       cssnano()
     ]).process(css, { from: cssPath, to: outPath });
 

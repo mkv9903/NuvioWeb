@@ -43,4 +43,5 @@
   ) {
     removeClass("no-backdrop-filter");
   }
+  if (supports("display", "grid")) removeClass("no-css-grid");
 })(window, document);
