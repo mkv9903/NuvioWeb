@@ -5,7 +5,7 @@ export default {
       // Chrome 53 doesn't support '*' for Access-Control-Allow-Headers
       // We must explicitly echo back whatever it requested.
       const requestedHeaders = request.headers.get("Access-Control-Request-Headers") || "*";
-      
+
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
@@ -13,6 +13,17 @@ export default {
           "Access-Control-Allow-Headers": requestedHeaders,
           "Access-Control-Max-Age": "86400"
         }
+      });
+    }
+
+    // Validate Security Token
+    const EXPECTED_TOKEN = "YOUR_SUPER_SECRET_TOKEN";
+    const requestToken = request.headers.get("x-proxy-token");
+
+    if (requestToken !== EXPECTED_TOKEN) {
+      return new Response("Forbidden: Invalid Proxy Token", {
+        status: 403,
+        headers: { "Access-Control-Allow-Origin": "*" }
       });
     }
 
@@ -28,6 +39,7 @@ export default {
     newHeaders.delete("Origin");
     newHeaders.delete("Referer");
     newHeaders.delete("Host");
+    newHeaders.delete("x-proxy-token"); // Don't forward the proxy token to the target
     // Cloudflare Workers runtime sets the correct Host header from targetUrl automatically.
 
     const proxyRequest = new Request(targetUrl, {
@@ -38,23 +50,23 @@ export default {
 
     try {
       const response = await fetch(proxyRequest);
-      
+
       // We must construct a new Response to ensure we can modify headers safely
       const proxyResponse = new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers
       });
-      
+
       // Override CORS headers
       proxyResponse.headers.set("Access-Control-Allow-Origin", "*");
       proxyResponse.headers.set("Access-Control-Expose-Headers", "*");
-      
+
       return proxyResponse;
     } catch (e) {
-      return new Response("Proxy Error: " + e.message, { 
+      return new Response("Proxy Error: " + e.message, {
         status: 502,
-        headers: { "Access-Control-Allow-Origin": "*" } 
+        headers: { "Access-Control-Allow-Origin": "*" }
       });
     }
   }

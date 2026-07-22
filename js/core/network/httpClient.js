@@ -1,6 +1,7 @@
 import { SessionStore } from "../storage/sessionStore.js";
 import { AuthManager } from "../auth/authManager.js";
 import { fetchViaWebOsSupabaseProxy } from "../../platform/webos/webosSupabaseProxy.js";
+import { Platform } from "../../platform/index.js";
 
 function toHeaderObject(headers) {
   if (!headers) {
@@ -24,9 +25,14 @@ const _originalFetch = typeof window !== 'undefined' ? window.fetch.bind(window)
 export async function proxyFetch(url, fetchInit) {
   const cloudProxyUrl = typeof window !== 'undefined' ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL : null;
   
-  if (cloudProxyUrl) {
+  if (cloudProxyUrl && Platform.isWebOS()) {
     const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(url)}`;
-    return await _originalFetch(targetUrl, fetchInit);
+    const proxyToken = typeof window !== 'undefined' ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN : null;
+    const modifiedInit = { ...fetchInit };
+    if (proxyToken) {
+      modifiedInit.headers = { ...(modifiedInit.headers || {}), 'x-proxy-token': proxyToken };
+    }
+    return await _originalFetch(targetUrl, modifiedInit);
   } else {
     return (await fetchViaWebOsSupabaseProxy(url, fetchInit)) || (await _originalFetch(url, fetchInit));
   }
@@ -39,7 +45,7 @@ if (typeof window !== 'undefined') {
   window.fetch = async function(url, options) {
     const cloudProxyUrl = window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL;
     
-    if (cloudProxyUrl) {
+    if (cloudProxyUrl && Platform.isWebOS()) {
       const urlStr = String(url || "");
       
       // Only proxy absolute http(s) URLs — never relative paths, data:, blob:, etc.
@@ -85,7 +91,12 @@ if (typeof window !== 'undefined') {
       
       // Route through Cloudflare proxy
       const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(urlStr)}`;
-      return await _originalFetch(targetUrl, options);
+      const proxyToken = window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN;
+      const modifiedOptions = { ...(options || {}) };
+      if (proxyToken) {
+        modifiedOptions.headers = { ...(modifiedOptions.headers || {}), 'x-proxy-token': proxyToken };
+      }
+      return await _originalFetch(targetUrl, modifiedOptions);
     }
     return _originalFetch(url, options);
   };
