@@ -1212,6 +1212,9 @@
     <string name="layout_selection_subtitle">Scegli il layout della tua schermata home</string>
     <string name="layout_selection_continue">Continua</string>
     <string name="update_title">Aggiornamento App</string>
+    <string name="update_installer_required">Usa Nuvio WebTV Installer per aggiornare l\'app sulla TV.</string>
+    <string name="update_release_notes">Novità</string>
+    <string name="update_release_notes_unavailable">Non è disponibile una descrizione della release.</string>
     <string name="update_downloading">Download aggiornamento in corso</string>
     <string name="update_download">Scarica</string>
     <string name="update_downloading_ellipsis">Download in corso…</string>
@@ -2660,4 +2663,12 @@
     <string name="unsupported_device_required_platform">Piattaforma richiesta</string>
     <string name="unsupported_device_close">Chiudi</string>
     <string name="unsupported_device_unavailable">Non disponibile</string>
+    <string name="subtitle_position">Posizione dei sottotitoli</string>
+    <string name="subtitle_position_subtitle">Sposta i sottotitoli verso l'alto o verso il basso sullo schermo.</string>
+    <string name="subtitle_font_size_subtitle">Dimensione del testo usata per i sottotitoli durante la riproduzione.</string>
+    <string name="subtitle_bold_subtitle">Mostra il testo dei sottotitoli in grassetto.</string>
+    <string name="subtitle_outline_subtitle">Disegna un bordo attorno al testo dei sottotitoli per migliorare la leggibilità.</string>
+    <string name="subtitle_outline_color_subtitle">Colore del bordo dei sottotitoli.</string>
+    <string name="subtitle_text_color_subtitle">Colore del testo dei sottotitoli.</string>
+    <string name="player_error_web_headers_unsupported">Questa fonte non è compatibile con il lettore di questo dispositivo perché richiede header di richiesta speciali. Prova un'altra fonte o contatta il fornitore dell'add-on.</string>
 </resources>

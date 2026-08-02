@@ -20,6 +20,7 @@ import {
   scrollSettingsContentItem,
   settingsScrollIndicatorMarkup
 } from "../settings/settingsScreen.js";
+import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 
 const TABS = ["supporters", "sponsors", "contributors"];
 const DEFAULT_TAB = "contributors";
@@ -372,7 +373,12 @@ export const SupportersContributorsScreen = {
           : this.selectedTab === "sponsors"
             ? t("sponsors_loading", {}, "Loading sponsors...")
             : t("contributors_loading", {}, "Loading GitHub contributors...");
-      return `<div class="supporters-status">${escapeHtml(loading)}</div>`;
+      return `
+        <div class="supporters-status">
+          ${renderLoadingIndicator()}
+          <span>${escapeHtml(loading)}</span>
+        </div>
+      `;
     }
     if (tabState.error) {
       const title =

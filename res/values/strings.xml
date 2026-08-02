@@ -1481,9 +1481,17 @@
     <string name="subtitle_section_core">Core</string>
     <string name="subtitle_section_advanced">Advanced</string>
     <string name="subtitle_font_size">Font Size</string>
+    <string name="subtitle_font_size_subtitle">Text size used for subtitles during playback.</string>
     <string name="subtitle_bold">Bold</string>
+    <string name="subtitle_bold_subtitle">Show subtitle text in bold.</string>
     <string name="subtitle_outline">Outline</string>
+    <string name="subtitle_outline_subtitle">Draw an outline around subtitle text for readability.</string>
     <string name="subtitle_bottom_offset">Bottom Offset</string>
+    <string name="subtitle_position">Subtitle Position</string>
+    <string name="subtitle_position_subtitle">Move subtitles up or down on the screen.</string>
+    <string name="subtitle_position_default">Default</string>
+    <string name="subtitle_text_color_subtitle">Color of the subtitle text.</string>
+    <string name="subtitle_outline_color_subtitle">Color of the subtitle outline.</string>
     <string name="subtitle_on">On</string>
     <string name="subtitle_off">Off</string>
     <string name="subtitle_style_title">Subtitle Style</string>
@@ -1772,6 +1780,9 @@
     <string name="layout_selection_subtitle">Choose your home screen layout</string>
     <string name="layout_selection_continue">Continue</string>
     <string name="update_title">App Update</string>
+    <string name="update_installer_required">Use Nuvio WebTV Installer to update the app on your TV.</string>
+    <string name="update_release_notes">What\'s new</string>
+    <string name="update_release_notes_unavailable">No release description is available.</string>
     <string name="update_downloading">Downloading update</string>
     <string name="update_download">Download</string>
     <string name="update_downloading_ellipsis">Downloading…</string>

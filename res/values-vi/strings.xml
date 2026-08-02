@@ -743,6 +743,9 @@
     <string name="layout_selection_subtitle">Chọn bố cục màn hình chính</string>
     <string name="layout_selection_continue">Tiếp tục</string>
     <string name="update_title">Cập nhật ứng dụng</string>
+    <string name="update_installer_required">Dùng Nuvio WebTV Installer để cập nhật ứng dụng trên TV.</string>
+    <string name="update_release_notes">Có gì mới</string>
+    <string name="update_release_notes_unavailable">Không có mô tả bản phát hành.</string>
     <string name="update_downloading">Đang tải bản cập nhật</string>
     <string name="update_unknown_sources">Cho phép cài đặt từ nguồn không xác định để tiếp tục.</string>
     <string name="account_title">Tài khoản</string>
@@ -950,4 +953,20 @@
     <string name="unsupported_device_required_platform">Nền tảng yêu cầu</string>
     <string name="unsupported_device_close">Đóng</string>
     <string name="unsupported_device_unavailable">Không có</string>
+    <string name="still_watching_title">Bạn vẫn đang xem chứ?</string>
+    <string name="still_watching_continue">Phát</string>
+    <string name="still_watching_exit">Thoát</string>
+    <string name="still_watching_countdown">Dừng sau %1$d</string>
+    <string name="still_watching_setting_title">Bạn vẫn đang xem chứ?</string>
+    <string name="still_watching_setting_sub">Hiển thị lời nhắc sau nhiều tập liên tiếp được tự động phát.</string>
+    <string name="still_watching_threshold_title">Ngưỡng số tập</string>
+    <string name="still_watching_threshold_sub">Số tập tự động phát trước khi hiển thị lời nhắc.</string>
+    <string name="subtitle_position">Vị trí phụ đề</string>
+    <string name="subtitle_position_subtitle">Di chuyển phụ đề lên hoặc xuống trên màn hình.</string>
+    <string name="subtitle_font_size_subtitle">Cỡ chữ dùng cho phụ đề trong khi phát.</string>
+    <string name="subtitle_bold_subtitle">Hiển thị chữ phụ đề in đậm.</string>
+    <string name="subtitle_outline_subtitle">Vẽ viền quanh chữ phụ đề để dễ đọc hơn.</string>
+    <string name="subtitle_outline_color_subtitle">Màu viền của phụ đề.</string>
+    <string name="subtitle_text_color_subtitle">Màu chữ của phụ đề.</string>
+    <string name="player_error_web_headers_unsupported">Nguồn này không tương thích với trình phát của thiết bị vì nó yêu cầu các tiêu đề yêu cầu đặc biệt. Hãy thử nguồn khác hoặc liên hệ nhà cung cấp tiện ích bổ sung.</string>
 </resources>

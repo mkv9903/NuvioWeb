@@ -850,6 +850,9 @@
     <string name="layout_selection_subtitle">अपना होम स्क्रीन लेआउट चुनें</string>
     <string name="layout_selection_continue">जारी रखें</string>
     <string name="update_title">ऐप अपडेट</string>
+    <string name="update_installer_required">अपने टीवी पर ऐप अपडेट करने के लिए Nuvio WebTV Installer का उपयोग करें।</string>
+    <string name="update_release_notes">नया क्या है</string>
+    <string name="update_release_notes_unavailable">रिलीज़ का विवरण उपलब्ध नहीं है।</string>
     <string name="update_downloading">अपडेट डाउनलोड हो रहा है</string>
     <string name="update_download">डाउनलोड</string>
     <string name="update_downloading_ellipsis">डाउनलोड हो रहा है…</string>
@@ -1056,4 +1059,20 @@
     <string name="unsupported_device_required_platform">आवश्यक प्लेटफ़ॉर्म</string>
     <string name="unsupported_device_close">बंद करें</string>
     <string name="unsupported_device_unavailable">उपलब्ध नहीं</string>
+    <string name="still_watching_title">क्या आप अभी भी देख रहे हैं?</string>
+    <string name="still_watching_continue">चलाएँ</string>
+    <string name="still_watching_exit">बाहर निकलें</string>
+    <string name="still_watching_countdown">%1$d में रुक जाएगा</string>
+    <string name="still_watching_setting_title">क्या आप अभी भी देख रहे हैं?</string>
+    <string name="still_watching_setting_sub">लगातार अपने आप चले एपिसोड के बाद पूछें।</string>
+    <string name="still_watching_threshold_title">एपिसोड सीमा</string>
+    <string name="still_watching_threshold_sub">पूछने से पहले अपने आप चलने वाले एपिसोड की संख्या।</string>
+    <string name="subtitle_position">उपशीर्षक स्थिति</string>
+    <string name="subtitle_position_subtitle">उपशीर्षक को स्क्रीन पर ऊपर या नीचे ले जाएँ।</string>
+    <string name="subtitle_font_size_subtitle">प्लेबैक के दौरान उपशीर्षक के लिए उपयोग किया जाने वाला टेक्स्ट आकार।</string>
+    <string name="subtitle_bold_subtitle">उपशीर्षक टेक्स्ट को बोल्ड में दिखाएँ।</string>
+    <string name="subtitle_outline_subtitle">पठनीयता के लिए उपशीर्षक टेक्स्ट के चारों ओर आउटलाइन बनाएँ।</string>
+    <string name="subtitle_outline_color_subtitle">उपशीर्षक आउटलाइन का रंग।</string>
+    <string name="subtitle_text_color_subtitle">उपशीर्षक टेक्स्ट का रंग।</string>
+    <string name="player_error_web_headers_unsupported">यह स्रोत इस डिवाइस के प्लेयर के साथ संगत नहीं है क्योंकि इसके लिए विशेष अनुरोध हेडर आवश्यक हैं। कोई अन्य स्रोत आज़माएँ या ऐड-ऑन प्रदाता से संपर्क करें।</string>
 </resources>

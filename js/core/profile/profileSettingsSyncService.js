@@ -28,6 +28,7 @@ import {
   clearProfileSettingsCloudSyncPending,
   hasProfileSettingsCloudSyncPending
 } from "../../data/local/profileScopedStore.js";
+import { normalizeSubtitleVerticalOffset } from "../player/subtitleVerticalOffset.js";
 
 const PULL_RPC = "sync_pull_profile_settings_blob";
 const PUSH_RPC = "sync_push_profile_settings_blob";
@@ -234,7 +235,9 @@ function stringOrNull(value) {
 }
 
 function normalizeNextEpisodeThresholdModeForSync(value) {
-  const mode = String(value || "").trim().toUpperCase();
+  const mode = String(value || "")
+    .trim()
+    .toUpperCase();
   return mode === "MINUTES_BEFORE_END" ? "MINUTES_BEFORE_END" : "PERCENTAGE";
 }
 
@@ -600,9 +603,7 @@ const FEATURE_ADAPTERS = {
         modern_sidebar_enabled: Boolean(layout.modernSidebar),
         modern_sidebar_blur_enabled: Boolean(layout.modernSidebarBlur),
         modern_landscape_posters_enabled: Boolean(layout.modernLandscapePostersEnabled),
-        modern_hero_full_screen_backdrop: Boolean(
-          layout.modernHeroFullScreenBackdropEnabled
-        ),
+        modern_hero_full_screen_backdrop: Boolean(layout.modernHeroFullScreenBackdropEnabled),
         hero_section_enabled: Boolean(layout.heroSectionEnabled),
         search_discover_enabled: Boolean(layout.searchDiscoverEnabled),
         discover_location: normalizeDiscoverLocationForAndroid(layout.searchDiscoverEnabled),
@@ -728,9 +729,7 @@ const FEATURE_ADAPTERS = {
         partial.modernLandscapePostersEnabled = Boolean(raw.modern_landscape_posters_enabled);
       }
       if (booleanOrNull(raw.modern_hero_full_screen_backdrop) != null) {
-        partial.modernHeroFullScreenBackdropEnabled = Boolean(
-          raw.modern_hero_full_screen_backdrop
-        );
+        partial.modernHeroFullScreenBackdropEnabled = Boolean(raw.modern_hero_full_screen_backdrop);
       }
       if (booleanOrNull(raw.hero_section_enabled) != null) {
         partial.heroSectionEnabled = Boolean(raw.hero_section_enabled);
@@ -888,10 +887,10 @@ const FEATURE_ADAPTERS = {
         subtitle_use_forced_subtitles: shouldUseForcedSubtitlesForAndroid(settings),
         subtitle_size: Math.min(
           200,
-          Math.max(50, Math.trunc(Number(settings.subtitleStyle?.fontSize ?? 100) || 100))
+          Math.max(50, Math.trunc(Number(settings.subtitleStyle?.fontSize ?? 120) || 120))
         ),
-        subtitle_vertical_offset: Math.trunc(
-          Number(settings.subtitleStyle?.verticalOffset ?? 0) || 0
+        subtitle_vertical_offset: normalizeSubtitleVerticalOffset(
+          settings.subtitleStyle?.verticalOffset
         ),
         subtitle_bold: Boolean(settings.subtitleStyle?.bold),
         subtitle_text_color: hexToAndroidColorInt(settings.subtitleStyle?.textColor, "#ffffff"),
@@ -988,7 +987,6 @@ const FEATURE_ADAPTERS = {
       });
       [
         "subtitle_size",
-        "subtitle_vertical_offset",
         "subtitle_text_color",
         "subtitle_outline_color",
         "audio_amplification_db"
@@ -997,15 +995,18 @@ const FEATURE_ADAPTERS = {
           projected[key] = Math.trunc(Number(raw[key]));
         }
       });
-      [
-        "stream_auto_play_mode",
-        "stream_auto_play_source",
-        "stream_auto_play_regex"
-      ].forEach((key) => {
-        if (raw[key] != null) {
-          projected[key] = String(raw[key]);
+      if (numberOrNull(raw.subtitle_vertical_offset) != null) {
+        projected.subtitle_vertical_offset = normalizeSubtitleVerticalOffset(
+          raw.subtitle_vertical_offset
+        );
+      }
+      ["stream_auto_play_mode", "stream_auto_play_source", "stream_auto_play_regex"].forEach(
+        (key) => {
+          if (raw[key] != null) {
+            projected[key] = String(raw[key]);
+          }
         }
-      });
+      );
       if (numberOrNull(raw.stream_auto_play_timeout_seconds) != null) {
         projected.stream_auto_play_timeout_seconds = Math.max(
           0,
@@ -1033,7 +1034,8 @@ const FEATURE_ADAPTERS = {
           raw.next_episode_threshold_mode
         );
       }
-      const thresholdPercent = numberOrNull(raw.next_episode_threshold_percent_v2) ??
+      const thresholdPercent =
+        numberOrNull(raw.next_episode_threshold_percent_v2) ??
         numberOrNull(raw.next_episode_threshold_percent);
       if (thresholdPercent != null) {
         projected.next_episode_threshold_percent_v2 = normalizeHalfStepForSync(
@@ -1043,7 +1045,8 @@ const FEATURE_ADAPTERS = {
           99
         );
       }
-      const thresholdMinutes = numberOrNull(raw.next_episode_threshold_minutes_before_end_v2) ??
+      const thresholdMinutes =
+        numberOrNull(raw.next_episode_threshold_minutes_before_end_v2) ??
         numberOrNull(raw.next_episode_threshold_minutes_before_end);
       if (thresholdMinutes != null) {
         projected.next_episode_threshold_minutes_before_end_v2 = normalizeHalfStepForSync(
@@ -1102,7 +1105,9 @@ const FEATURE_ADAPTERS = {
         subtitleStyle.fontSize = Math.min(200, Math.max(50, Math.trunc(Number(raw.subtitle_size))));
       }
       if (numberOrNull(raw.subtitle_vertical_offset) != null) {
-        subtitleStyle.verticalOffset = Math.trunc(Number(raw.subtitle_vertical_offset));
+        subtitleStyle.verticalOffset = normalizeSubtitleVerticalOffset(
+          raw.subtitle_vertical_offset
+        );
       }
       if (booleanOrNull(raw.subtitle_bold) != null) {
         subtitleStyle.bold = Boolean(raw.subtitle_bold);
@@ -1146,12 +1151,19 @@ const FEATURE_ADAPTERS = {
           raw.next_episode_threshold_mode
         );
       }
-      const thresholdPercent = numberOrNull(raw.next_episode_threshold_percent_v2) ??
+      const thresholdPercent =
+        numberOrNull(raw.next_episode_threshold_percent_v2) ??
         numberOrNull(raw.next_episode_threshold_percent);
       if (thresholdPercent != null) {
-        partial.nextEpisodeThresholdPercent = normalizeHalfStepForSync(thresholdPercent, 97, 100, 99);
+        partial.nextEpisodeThresholdPercent = normalizeHalfStepForSync(
+          thresholdPercent,
+          97,
+          100,
+          99
+        );
       }
-      const thresholdMinutes = numberOrNull(raw.next_episode_threshold_minutes_before_end_v2) ??
+      const thresholdMinutes =
+        numberOrNull(raw.next_episode_threshold_minutes_before_end_v2) ??
         numberOrNull(raw.next_episode_threshold_minutes_before_end);
       if (thresholdMinutes != null) {
         partial.nextEpisodeThresholdMinutesBeforeEnd = normalizeHalfStepForSync(
@@ -1177,7 +1189,10 @@ const FEATURE_ADAPTERS = {
         partial.streamAutoPlayRegex = String(raw.stream_auto_play_regex);
       }
       if (numberOrNull(raw.stream_auto_play_timeout_seconds) != null) {
-        partial.streamAutoPlayTimeoutSeconds = Math.max(0, Math.trunc(Number(raw.stream_auto_play_timeout_seconds)));
+        partial.streamAutoPlayTimeoutSeconds = Math.max(
+          0,
+          Math.trunc(Number(raw.stream_auto_play_timeout_seconds))
+        );
       }
       if (booleanOrNull(raw.stream_auto_play_reuse_binge_group) != null) {
         partial.streamAutoPlayReuseBingeGroup = Boolean(raw.stream_auto_play_reuse_binge_group);
@@ -1617,14 +1632,19 @@ const FEATURE_ADAPTERS = {
           0,
           Math.min(5, Math.trunc(Number(settings.instantPlaybackPreparationLimit || 0)))
         ),
-        stream_max_results: Math.max(0, Math.min(100, Math.trunc(Number(settings.streamMaxResults || 0)))),
+        stream_max_results: Math.max(
+          0,
+          Math.min(100, Math.trunc(Number(settings.streamMaxResults || 0)))
+        ),
         stream_sort_mode: String(settings.streamSortMode || "DEFAULT").toUpperCase(),
         stream_minimum_quality: String(settings.streamMinimumQuality || "ANY").toUpperCase(),
         stream_dolby_vision_filter: String(settings.streamDolbyVisionFilter || "ANY").toUpperCase(),
         stream_hdr_filter: String(settings.streamHdrFilter || "ANY").toUpperCase(),
         stream_codec_filter: String(settings.streamCodecFilter || "ANY").toUpperCase(),
         stream_badges_enabled: settings.streamBadgesEnabled !== false,
-        stream_preferences: JSON.stringify(normalizeDebridStreamPreferences(settings.streamPreferences)),
+        stream_preferences: JSON.stringify(
+          normalizeDebridStreamPreferences(settings.streamPreferences)
+        ),
         debrid_stream_name_template: String(settings.streamNameTemplate || ""),
         debrid_stream_description_template: String(
           settings.streamDescriptionTemplate ?? ANDROID_DEBRID_STREAM_DESCRIPTION_TEMPLATE
@@ -1707,7 +1727,10 @@ const FEATURE_ADAPTERS = {
         );
       }
       if (numberOrNull(raw.stream_max_results) != null) {
-        partial.streamMaxResults = Math.max(0, Math.min(100, Math.trunc(Number(raw.stream_max_results))));
+        partial.streamMaxResults = Math.max(
+          0,
+          Math.min(100, Math.trunc(Number(raw.stream_max_results)))
+        );
       }
       if (raw.stream_sort_mode != null) {
         partial.streamSortMode = String(raw.stream_sort_mode || "DEFAULT")

@@ -722,7 +722,10 @@
     <string name="layout_selection_welcome">Welkom bij Nuvio</string>
     <string name="layout_selection_subtitle">Kies je startschermindeling</string>
     <string name="layout_selection_continue">Doorgaan</string>
-    <string name="update_title">App-update</string>
+<string name="update_title">App-update</string>
+<string name="update_installer_required">Gebruik Nuvio WebTV Installer om de app op je tv bij te werken.</string>
+<string name="update_release_notes">Wat is er nieuw</string>
+<string name="update_release_notes_unavailable">Er is geen releasebeschrijving beschikbaar.</string>
     <string name="update_downloading">Update downloaden</string>
     <string name="update_unknown_sources">Sta installaties van onbekende bronnen toe om door te gaan.</string>
     <string name="account_title">Account</string>
@@ -932,4 +935,20 @@
     <string name="unsupported_device_required_platform">Vereist platform</string>
     <string name="unsupported_device_close">Sluiten</string>
     <string name="unsupported_device_unavailable">Niet beschikbaar</string>
+    <string name="still_watching_title">Kijk je nog?</string>
+    <string name="still_watching_continue">Afspelen</string>
+    <string name="still_watching_exit">Afsluiten</string>
+    <string name="still_watching_countdown">Stopt over %1$d</string>
+    <string name="still_watching_setting_title">Kijk je nog?</string>
+    <string name="still_watching_setting_sub">Vraag om bevestiging na opeenvolgend automatisch afgespeelde afleveringen.</string>
+    <string name="still_watching_threshold_title">Afleveringsdrempel</string>
+    <string name="still_watching_threshold_sub">Aantal automatisch afgespeelde afleveringen voordat om bevestiging wordt gevraagd.</string>
+    <string name="subtitle_position">Ondertitelpositie</string>
+    <string name="subtitle_position_subtitle">Verplaats ondertitels omhoog of omlaag op het scherm.</string>
+    <string name="subtitle_font_size_subtitle">Tekstgrootte die tijdens het afspelen voor ondertitels wordt gebruikt.</string>
+    <string name="subtitle_bold_subtitle">Ondertiteltekst vet weergeven.</string>
+    <string name="subtitle_outline_subtitle">Teken een rand rond de ondertiteltekst voor betere leesbaarheid.</string>
+    <string name="subtitle_outline_color_subtitle">Kleur van de ondertitelrand.</string>
+    <string name="subtitle_text_color_subtitle">Kleur van de ondertiteltekst.</string>
+    <string name="player_error_web_headers_unsupported">Deze bron is niet compatibel met de speler van dit apparaat omdat er speciale request-headers nodig zijn. Probeer een andere bron of neem contact op met de add-on-aanbieder.</string>
 </resources>

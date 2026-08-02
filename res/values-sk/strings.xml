@@ -1639,6 +1639,9 @@
     <string name="layout_selection_subtitle">Vyberte rozloženie domovskej obrazovky</string>
     <string name="layout_selection_continue">Pokračovať</string>
     <string name="update_title">Aktualizácia aplikácie</string>
+    <string name="update_installer_required">Na aktualizáciu aplikácie v televízore použite Nuvio WebTV Installer.</string>
+    <string name="update_release_notes">Čo je nové</string>
+    <string name="update_release_notes_unavailable">Popis vydania nie je k dispozícii.</string>
     <string name="update_downloading">Sťahuje sa aktualizácia</string>
     <string name="update_download">Stiahnuť</string>
     <string name="update_downloading_ellipsis">Sťahuje sa…</string>
@@ -2400,4 +2403,12 @@
     <string name="unsupported_device_required_platform">Požadovaná platforma</string>
     <string name="unsupported_device_close">Zavrieť</string>
     <string name="unsupported_device_unavailable">Nedostupné</string>
+    <string name="subtitle_position">Poloha titulkov</string>
+    <string name="subtitle_position_subtitle">Posunie titulky nahor alebo nadol po obrazovke.</string>
+    <string name="subtitle_font_size_subtitle">Veľkosť textu použitá pre titulky počas prehrávania.</string>
+    <string name="subtitle_bold_subtitle">Zobraziť text titulkov tučne.</string>
+    <string name="subtitle_outline_subtitle">Vykresliť obrys okolo textu titulkov pre lepšiu čitateľnosť.</string>
+    <string name="subtitle_outline_color_subtitle">Farba obrysu titulkov.</string>
+    <string name="subtitle_text_color_subtitle">Farba textu titulkov.</string>
+    <string name="player_error_web_headers_unsupported">Tento zdroj nie je kompatibilný s prehrávačom tohto zariadenia, pretože vyžaduje špeciálne hlavičky požiadavky. Skúste iný zdroj alebo kontaktujte poskytovateľa doplnku.</string>
 </resources>

@@ -233,7 +233,7 @@ function mapProgressRow(row = {}) {
       normalizedVideoId.startsWith(SYNTHETIC_EPISODE_VIDEO_PREFIX)
         ? null
         : normalizedVideoId,
-    season: Number.isFinite(seasonNum) && seasonNum > 0 ? seasonNum : null,
+    season: seasonRaw != null && Number.isFinite(seasonNum) && seasonNum >= 0 ? seasonNum : null,
     episode: Number.isFinite(episodeNum) && episodeNum > 0 ? episodeNum : null,
     positionMs: normalizedTimes.positionMs,
     durationMs: normalizedTimes.durationMs,
@@ -283,13 +283,24 @@ function toPositiveIntegerOrNull(value) {
   return Math.trunc(n);
 }
 
+function toNonNegativeIntegerOrNull(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return null;
+  }
+  return Math.trunc(n);
+}
+
 function toRemoteVideoId(item = {}) {
   const explicitVideoId = String(item.videoId || "").trim();
   const contentId = String(item.contentId || "").trim();
   if (explicitVideoId && explicitVideoId !== "main" && explicitVideoId !== contentId) {
     return explicitVideoId;
   }
-  const season = toPositiveIntegerOrNull(item.season);
+  const season = toNonNegativeIntegerOrNull(item.season);
   const episode = toPositiveIntegerOrNull(item.episode);
   if (season != null || episode != null) {
     return `${SYNTHETIC_EPISODE_VIDEO_PREFIX}${season || 0}:${episode || 0}`;
@@ -302,7 +313,7 @@ function toRemoteVideoId(item = {}) {
 
 function toProgressKey(item = {}) {
   const contentId = String(item.contentId || "").trim();
-  const season = toPositiveIntegerOrNull(item.season);
+  const season = toNonNegativeIntegerOrNull(item.season);
   const episode = toPositiveIntegerOrNull(item.episode);
   if (contentId && season != null && episode != null) {
     return `${contentId}_s${season}e${episode}`;
@@ -312,7 +323,7 @@ function toProgressKey(item = {}) {
 
 function syncIdentityKey(item = {}) {
   const contentId = String(item.contentId || "").trim();
-  const season = toPositiveIntegerOrNull(item.season);
+  const season = toNonNegativeIntegerOrNull(item.season);
   const episode = toPositiveIntegerOrNull(item.episode);
   if (contentId && season != null && episode != null) {
     return `${contentId}:episode:${season}:${episode}`;

@@ -10,6 +10,7 @@ import {
 import { TraktAuthStore } from "../local/traktAuthStore.js";
 import { TraktAuthService } from "./traktAuthService.js";
 import { metaRepository } from "./metaRepository.js";
+import { mapWithConcurrency } from "../../core/network/mapWithConcurrency.js";
 import {
   WATCH_PROGRESS_COMPLETED_THRESHOLD,
   WATCH_PROGRESS_STARTED_THRESHOLD,
@@ -29,6 +30,7 @@ const CW_PROGRESS_END_THRESHOLD = WATCH_PROGRESS_COMPLETED_THRESHOLD;
 // generous — only a genuinely stuck request is abandoned.
 const TRAKT_API_TIMEOUT_MS = 10000;
 const PROGRESS_META_TIMEOUT_MS = 8000;
+const PROGRESS_META_CONCURRENCY = 4;
 
 function withTimeout(promise, ms, fallback) {
   let timer = null;
@@ -248,9 +250,9 @@ function matchesResumeTarget(item = {}, { videoId = null, season = null, episode
   if (wantedVideoId && String(item?.videoId || "").trim() === wantedVideoId) {
     return true;
   }
-  const wantedSeason = Number(season || 0);
+  const wantedSeason = Number(season);
   const wantedEpisode = Number(episode || 0);
-  if (wantedSeason > 0 && wantedEpisode > 0) {
+  if (season != null && Number.isFinite(wantedSeason) && wantedSeason >= 0 && wantedEpisode > 0) {
     return (
       Number(item?.season || item?.seasonNumber || 0) === wantedSeason &&
       Number(item?.episode || item?.episodeNumber || 0) === wantedEpisode
@@ -266,8 +268,13 @@ function selectBestResumeProgress(items = [], contentIds = [], target = {}) {
   if (!candidates.length) {
     return null;
   }
-  const hasExplicitTarget = Boolean(String(target?.videoId || "").trim())
-    || (Number(target?.season || 0) > 0 && Number(target?.episode || 0) > 0);
+  const targetSeason = Number(target?.season);
+  const hasExplicitTarget =
+    Boolean(String(target?.videoId || "").trim()) ||
+    (target?.season != null &&
+      Number.isFinite(targetSeason) &&
+      targetSeason >= 0 &&
+      Number(target?.episode || 0) > 0);
   const targeted = candidates.filter((item) => matchesResumeTarget(item, target));
   const pool = hasExplicitTarget ? targeted : candidates;
   if (!pool.length) {
@@ -304,11 +311,7 @@ function toProgressItemFromTraktHistory(historyItem) {
   const isEpisode = historyItem.type === "episode";
   const tmdbId = isEpisode ? historyItem.showTmdbId : historyItem.tmdbId;
   const traktId = isEpisode ? historyItem.showTraktId : historyItem.traktId;
-  const contentId = tmdbId
-    ? `tmdb:${tmdbId}`
-    : traktId
-      ? `trakt:${traktId}`
-      : null;
+  const contentId = tmdbId ? `tmdb:${tmdbId}` : traktId ? `trakt:${traktId}` : null;
   if (!contentId) return null;
   const watchedAtMs = historyItem.watchedAt
     ? new Date(historyItem.watchedAt).getTime()
@@ -331,7 +334,13 @@ function toProgressItemFromTraktHistory(historyItem) {
     // Keep it out of Continue Watching while still letting it seed Next Up.
     progressPercent: 100,
     profileId: activeProfileId(),
-    season: isEpisode ? Number(historyItem.seasonNumber || 0) || null : null,
+    season:
+      isEpisode &&
+      historyItem.seasonNumber != null &&
+      Number.isFinite(Number(historyItem.seasonNumber)) &&
+      Number(historyItem.seasonNumber) >= 0
+        ? Number(historyItem.seasonNumber)
+        : null,
     episode: isEpisode ? Number(historyItem.episodeNumber || 0) || null : null,
     seasonNumber: isEpisode ? historyItem.seasonNumber : undefined,
     episodeNumber: isEpisode ? historyItem.episodeNumber : undefined,
@@ -364,7 +373,13 @@ function toProgressItemFromPlayback(playbackItem) {
     durationMs: 0,
     progressPercent: playbackItem.progressPercent,
     profileId: activeProfileId(),
-    season: isEpisode ? Number(playbackItem.seasonNumber || 0) || null : null,
+    season:
+      isEpisode &&
+      playbackItem.seasonNumber != null &&
+      Number.isFinite(Number(playbackItem.seasonNumber)) &&
+      Number(playbackItem.seasonNumber) >= 0
+        ? Number(playbackItem.seasonNumber)
+        : null,
     episode: isEpisode ? Number(playbackItem.episodeNumber || 0) || null : null,
     seasonNumber: playbackItem.seasonNumber,
     episodeNumber: playbackItem.episodeNumber,
@@ -439,21 +454,26 @@ async function fetchTraktProgressSnapshot() {
 
   traktProgressSnapshotInFlight = (async () => {
     const [history, playbackState, watchedShows] = await Promise.all([
-      withTimeout(TraktAuthService.fetchWatchHistory({ limit: 300 }), TRAKT_API_TIMEOUT_MS, [])
-        .catch((err) => {
-          console.warn("[CW] Trakt history fetch failed", err);
-          return [];
-        }),
-      withTimeout(TraktAuthService.fetchPlaybackState({ limit: 50 }), TRAKT_API_TIMEOUT_MS, [])
-        .catch((err) => {
-          console.warn("[CW] Trakt playback state fetch failed", err);
-          return [];
-        }),
-      withTimeout(TraktAuthService.fetchWatchedShows(), TRAKT_API_TIMEOUT_MS, [])
-        .catch((err) => {
-          console.warn("[CW] Trakt watched shows fetch failed", err);
-          return [];
-        })
+      withTimeout(
+        TraktAuthService.fetchWatchHistory({ limit: 300 }),
+        TRAKT_API_TIMEOUT_MS,
+        []
+      ).catch((err) => {
+        console.warn("[CW] Trakt history fetch failed", err);
+        return [];
+      }),
+      withTimeout(
+        TraktAuthService.fetchPlaybackState({ limit: 50 }),
+        TRAKT_API_TIMEOUT_MS,
+        []
+      ).catch((err) => {
+        console.warn("[CW] Trakt playback state fetch failed", err);
+        return [];
+      }),
+      withTimeout(TraktAuthService.fetchWatchedShows(), TRAKT_API_TIMEOUT_MS, []).catch((err) => {
+        console.warn("[CW] Trakt watched shows fetch failed", err);
+        return [];
+      })
     ]);
 
     const watchedShowSeedItems = [];
@@ -486,30 +506,28 @@ const ENRICHED_META_CACHE_TTL_MS = 5 * 60 * 1000;
 async function batchEnrichProgressItems(items) {
   if (!items.length) return [];
   const now = Date.now();
-  return Promise.all(
-    items.map(async (item) => {
-      const lookupId = item.imdbId || item.contentId;
-      const cacheKey = `${item.contentType}:${lookupId}`;
-      const cached = enrichedMetaCache.get(cacheKey);
-      let meta = null;
-      if (cached && now - cached.timestamp < ENRICHED_META_CACHE_TTL_MS) {
-        meta = cached.meta;
-      } else {
-        const canonicalType = item.contentType === "series" ? "series" : "movie";
-        meta = await withTimeout(
-          metaRepository.getMetaFromAllAddons(canonicalType, lookupId),
-          PROGRESS_META_TIMEOUT_MS,
-          null
-        ).catch(() => null);
-        // Only cache real metadata. Caching a null (timeout/miss) would leave the
-        // item unenriched for the full TTL after a single slow response.
-        if (meta) {
-          enrichedMetaCache.set(cacheKey, { meta, timestamp: now });
-        }
+  return mapWithConcurrency(items, PROGRESS_META_CONCURRENCY, async (item) => {
+    const lookupId = item.imdbId || item.contentId;
+    const cacheKey = `${item.contentType}:${lookupId}`;
+    const cached = enrichedMetaCache.get(cacheKey);
+    let meta = null;
+    if (cached && now - cached.timestamp < ENRICHED_META_CACHE_TTL_MS) {
+      meta = cached.meta;
+    } else {
+      const canonicalType = item.contentType === "series" ? "series" : "movie";
+      meta = await withTimeout(
+        metaRepository.getMetaFromAllAddons(canonicalType, lookupId),
+        PROGRESS_META_TIMEOUT_MS,
+        null
+      ).catch(() => null);
+      // Only cache real metadata. Caching a null (timeout/miss) would leave the
+      // item unenriched for the full TTL after a single slow response.
+      if (meta) {
+        enrichedMetaCache.set(cacheKey, { meta, timestamp: now });
       }
-      return meta ? { ...item, enrichedMeta: meta } : item;
-    })
-  );
+    }
+    return meta ? { ...item, enrichedMeta: meta } : item;
+  });
 }
 
 class WatchProgressRepository {
@@ -548,7 +566,7 @@ class WatchProgressRepository {
       selectedContinueWatchingSource() === WatchProgressSource.TRAKT &&
       TraktAuthStore.isAuthenticated()
     ) {
-      sourceItems = await this.getRecent(300).catch((error) => {
+      sourceItems = await this.getRecent(300, { enrichMetadata: false }).catch((error) => {
         console.warn("[CW] Resume lookup failed", error);
         return sourceItems;
       });
@@ -572,7 +590,7 @@ class WatchProgressRepository {
     queueWatchProgressCloudSync();
   }
 
-  async getRecent(limit = 30) {
+  async getRecent(limit = 30, { enrichMetadata = true } = {}) {
     const now = Date.now();
     const useTraktProgress = selectedContinueWatchingSource() === WatchProgressSource.TRAKT;
     const daysCap = normalizeTraktContinueWatchingDaysCap(
@@ -592,7 +610,12 @@ class WatchProgressRepository {
     }
 
     const localItems = WatchProgressStore.listForProfile(activeProfileId());
-    const allItems = [...localItems, ...traktHistoryItems, ...playbackItems, ...watchedShowSeedItems];
+    const allItems = [
+      ...localItems,
+      ...traktHistoryItems,
+      ...playbackItems,
+      ...watchedShowSeedItems
+    ];
 
     const recentItems = filterForSelectedContinueWatchingSource(allItems)
       .filter((item) => cutoffMs === 0 || Number(item?.updatedAt || 0) >= cutoffMs)
@@ -601,8 +624,8 @@ class WatchProgressRepository {
 
     const inProgressOnly = deduplicateInProgress(recentItems);
 
-    const enrichedItems = await batchEnrichProgressItems(inProgressOnly.slice(0, limit));
-    return enrichedItems;
+    const limitedItems = inProgressOnly.slice(0, limit);
+    return enrichMetadata ? batchEnrichProgressItems(limitedItems) : limitedItems;
   }
 
   async getAll() {

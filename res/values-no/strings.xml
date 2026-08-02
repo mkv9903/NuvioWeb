@@ -971,6 +971,9 @@
     <string name="layout_selection_subtitle">Velg oppsettet for hjemmeskjermen</string>
     <string name="layout_selection_continue">Fortsett</string>
     <string name="update_title">Appoppdatering</string>
+    <string name="update_installer_required">Bruk Nuvio WebTV Installer for å oppdatere appen på TV-en.</string>
+    <string name="update_release_notes">Dette er nytt</string>
+    <string name="update_release_notes_unavailable">Ingen utgivelsesbeskrivelse er tilgjengelig.</string>
     <string name="update_downloading">Laster ned oppdatering</string>
     <string name="update_download">Last ned</string>
     <string name="update_downloading_ellipsis">Laster ned…</string>
@@ -1047,4 +1050,20 @@
     <string name="unsupported_device_required_platform">Påkrevd plattform</string>
     <string name="unsupported_device_close">Lukk</string>
     <string name="unsupported_device_unavailable">Ikke tilgjengelig</string>
+    <string name="still_watching_title">Ser du fortsatt?</string>
+    <string name="still_watching_continue">Spill av</string>
+    <string name="still_watching_exit">Avslutt</string>
+    <string name="still_watching_countdown">Stopper om %1$d</string>
+    <string name="still_watching_setting_title">Ser du fortsatt?</string>
+    <string name="still_watching_setting_sub">Spør etter flere automatisk avspilte episoder på rad.</string>
+    <string name="still_watching_threshold_title">Episodegrense</string>
+    <string name="still_watching_threshold_sub">Antall automatisk avspilte episoder før du blir spurt.</string>
+    <string name="subtitle_position">Undertekstposisjon</string>
+    <string name="subtitle_position_subtitle">Flytt undertekstene opp eller ned på skjermen.</string>
+    <string name="subtitle_font_size_subtitle">Tekststørrelse som brukes for undertekster under avspilling.</string>
+    <string name="subtitle_bold_subtitle">Vis undertekstteksten i fet skrift.</string>
+    <string name="subtitle_outline_subtitle">Tegn et omriss rundt undertekstteksten for bedre lesbarhet.</string>
+    <string name="subtitle_outline_color_subtitle">Farge på undertekstens omriss.</string>
+    <string name="subtitle_text_color_subtitle">Farge på undertekstteksten.</string>
+    <string name="player_error_web_headers_unsupported">Denne kilden er ikke kompatibel med enhetens spiller fordi den krever spesielle forespørselshoder. Prøv en annen kilde eller kontakt tilleggsleverandøren.</string>
 </resources>

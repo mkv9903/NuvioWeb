@@ -1615,7 +1615,10 @@
     <string name="layout_selection_welcome">Καλώς ήρθατε στο Nuvio</string>
     <string name="layout_selection_subtitle">Επιλέξτε τη διάταξη αρχικής οθόνης</string>
     <string name="layout_selection_continue">Συνέχεια</string>
-    <string name="update_title">Ενημέρωση εφαρμογής</string>
+  <string name="update_title">Ενημέρωση εφαρμογής</string>
+  <string name="update_installer_required">Χρησιμοποιήστε το Nuvio WebTV Installer για να ενημερώσετε την εφαρμογή στην τηλεόρασή σας.</string>
+  <string name="update_release_notes">Τι νέο υπάρχει</string>
+  <string name="update_release_notes_unavailable">Δεν υπάρχει διαθέσιμη περιγραφή έκδοσης.</string>
     <string name="update_downloading">Λήψη ενημέρωσης</string>
     <string name="update_download">Λήψη</string>
     <string name="update_downloading_ellipsis">Λήψη…</string>
@@ -2244,4 +2247,12 @@
     <string name="unsupported_device_required_platform">Απαιτούμενη πλατφόρμα</string>
     <string name="unsupported_device_close">Κλείσιμο</string>
     <string name="unsupported_device_unavailable">Μη διαθέσιμο</string>
+    <string name="subtitle_position">Θέση υποτίτλων</string>
+    <string name="subtitle_position_subtitle">Μετακίνηση των υποτίτλων προς τα πάνω ή προς τα κάτω στην οθόνη.</string>
+    <string name="subtitle_font_size_subtitle">Μέγεθος κειμένου που χρησιμοποιείται για τους υπότιτλους κατά την αναπαραγωγή.</string>
+    <string name="subtitle_bold_subtitle">Εμφάνιση του κειμένου των υποτίτλων με έντονη γραφή.</string>
+    <string name="subtitle_outline_subtitle">Σχεδίαση περιγράμματος γύρω από το κείμενο των υποτίτλων για καλύτερη αναγνωσιμότητα.</string>
+    <string name="subtitle_outline_color_subtitle">Χρώμα του περιγράμματος των υποτίτλων.</string>
+    <string name="subtitle_text_color_subtitle">Χρώμα του κειμένου των υποτίτλων.</string>
+    <string name="player_error_web_headers_unsupported">Αυτή η πηγή δεν είναι συμβατή με την αναπαραγωγή αυτής της συσκευής επειδή απαιτεί ειδικές κεφαλίδες αιτήματος. Δοκιμάστε άλλη πηγή ή επικοινωνήστε με τον πάροχο του πρόσθετου.</string>
 </resources>

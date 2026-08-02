@@ -1469,6 +1469,9 @@
     <string name="layout_selection_subtitle">உங்கள் முகப்புத்திரை வடிவமைப்பை தேர்ந்தெடுக்கவும்</string>
     <string name="layout_selection_continue">தொடர்க</string>
     <string name="update_title">செயலி புதுப்பிப்பு</string>
+    <string name="update_installer_required">உங்கள் டிவியில் செயலியைப் புதுப்பிக்க Nuvio WebTV Installer-ஐப் பயன்படுத்தவும்.</string>
+    <string name="update_release_notes">புதியவை</string>
+    <string name="update_release_notes_unavailable">வெளியீட்டு விளக்கம் கிடைக்கவில்லை.</string>
     <string name="update_downloading">புதுப்பிப்பு பதிவிறக்கப்படுகிறது</string>
     <string name="update_download">பதிவிறக்கு</string>
     <string name="update_downloading_ellipsis">பதிவிறக்கப்படுகிறது…</string>
@@ -2099,4 +2102,12 @@
     <string name="unsupported_device_required_platform">தேவையான இயங்குதளம்</string>
     <string name="unsupported_device_close">மூடு</string>
     <string name="unsupported_device_unavailable">கிடைக்கவில்லை</string>
+    <string name="subtitle_position">வசன வரிகளின் நிலை</string>
+    <string name="subtitle_position_subtitle">வசன வரிகளைத் திரையில் மேலே அல்லது கீழே நகர்த்தவும்.</string>
+    <string name="subtitle_font_size_subtitle">இயக்கத்தின்போது வசன வரிகளுக்குப் பயன்படுத்தப்படும் உரை அளவு.</string>
+    <string name="subtitle_bold_subtitle">வசன வரிகளின் உரையைத் தடிமனாகக் காட்டு.</string>
+    <string name="subtitle_outline_subtitle">படிக்கும் தன்மைக்காக வசன வரிகளின் உரையைச் சுற்றி வெளிக்கோடு வரையவும்.</string>
+    <string name="subtitle_outline_color_subtitle">வசன வரிகளின் வெளிக்கோட்டின் நிறம்.</string>
+    <string name="subtitle_text_color_subtitle">வசன வரிகளின் உரையின் நிறம்.</string>
+    <string name="player_error_web_headers_unsupported">இந்த மூலம் சிறப்பு கோரிக்கை தலைப்புகளைக் கோருவதால் இந்தச் சாதனத்தின் பிளேயருடன் இணக்கமில்லை. வேறு மூலத்தை முயற்சிக்கவும் அல்லது ஆட்-ஆன் வழங்குநரைத் தொடர்பு கொள்ளவும்.</string>
 </resources>

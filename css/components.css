@@ -342,6 +342,17 @@ button:focus-visible {
   gap: 8px;
 }
 
+.account-settings-loading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.account-settings-loading .nuvio-loading-indicator {
+  width: 40px;
+  height: 40px;
+}
+
 .account-info span,
 .status-card .status-label,
 .stat-label,
@@ -1691,6 +1702,95 @@ button:focus-visible {
   line-height: 1.4;
 }
 
+/* App update prompt — follows Android TV UpdatePromptDialog dimensions and hierarchy. */
+.nuvio-dialog-panel.app-update-dialog {
+  position: relative;
+  border-color: var(--focus-color, #ffffff);
+  gap: 24px;
+}
+
+.app-update-dialog .nuvio-dialog-title {
+  padding-right: 180px;
+  font-weight: 700;
+}
+
+.app-update-dialog .nuvio-dialog-subtitle {
+  margin-top: -10px;
+  padding-right: 120px;
+}
+
+.app-update-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.app-update-version {
+  position: absolute;
+  top: 58px;
+  right: 48px;
+  color: #b3b3b3;
+  font-size: 26px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 2px;
+  opacity: 0.8;
+}
+
+.app-update-notes-label {
+  color: #ffffff;
+  font-size: 27px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.app-update-notes {
+  max-height: min(40vh, 440px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 24px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  color: #b3b3b3;
+  font-size: 26px;
+  line-height: 1.5;
+  scrollbar-width: thin;
+  scrollbar-color: var(--focus-color, #f5f5f5) transparent;
+}
+
+.app-update-notes-heading {
+  color: #ffffff;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.app-update-notes-paragraph + .app-update-notes-paragraph,
+.app-update-notes-bullet + .app-update-notes-paragraph,
+.app-update-notes-heading + .app-update-notes-paragraph {
+  margin-top: 12px;
+}
+
+.app-update-notes-bullet {
+  position: relative;
+  padding-left: 28px;
+}
+
+.app-update-notes-bullet::before {
+  content: "•";
+  position: absolute;
+  left: 4px;
+  color: var(--focus-color, #f5f5f5);
+}
+
+.nuvio-dialog-actions.app-update-actions {
+  align-items: center;
+}
+
+.app-update-actions .nuvio-dialog-button {
+  width: min(100%, 360px);
+  text-align: center;
+}
+
 /* Actions column — gap=16dp=32px */
 .nuvio-dialog-actions {
   display: flex;
@@ -1946,19 +2046,110 @@ button:focus-visible {
   height: 100%;
 }
 
-.home-loading-spinner {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  border: 4px solid rgba(158, 158, 158, 0.22);
-  border-top-color: #9e9e9e;
-  animation: homeLoadingSpin 820ms linear infinite;
+.nuvio-loading-indicator {
+  position: relative;
+  display: inline-block;
+  width: 96px;
+  height: 96px;
+  flex: none;
+  overflow: visible;
+  color: var(--text-secondary);
 }
 
-@keyframes homeLoadingSpin {
-  to {
-    transform: rotate(360deg);
+.nuvio-loading-indicator-spoke {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  transform-origin: 50% 50%;
+  animation: nuvioLoadingIndicatorFade 1000ms cubic-bezier(0.167, 0.167, 0.833, 0.833) infinite;
+}
+
+.nuvio-loading-indicator-spoke::before {
+  content: "";
+  position: absolute;
+  top: 17.333%;
+  left: 46.667%;
+  width: 6.667%;
+  height: 17%;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(1) {
+  transform: rotate(0deg);
+  animation-delay: 0ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(2) {
+  transform: rotate(30deg);
+  animation-delay: -916.667ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(3) {
+  transform: rotate(60deg);
+  animation-delay: -833.333ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(4) {
+  transform: rotate(90deg);
+  animation-delay: -750ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(5) {
+  transform: rotate(120deg);
+  animation-delay: -666.667ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(6) {
+  transform: rotate(150deg);
+  animation-delay: -583.333ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(7) {
+  transform: rotate(180deg);
+  animation-delay: -500ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(8) {
+  transform: rotate(210deg);
+  animation-delay: -416.667ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(9) {
+  transform: rotate(240deg);
+  animation-delay: -333.333ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(10) {
+  transform: rotate(270deg);
+  animation-delay: -250ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(11) {
+  transform: rotate(300deg);
+  animation-delay: -166.667ms;
+}
+
+.nuvio-loading-indicator-spoke:nth-child(12) {
+  transform: rotate(330deg);
+  animation-delay: -83.333ms;
+}
+
+@keyframes nuvioLoadingIndicatorFade {
+  from {
+    opacity: 1;
   }
+  to {
+    opacity: 0;
+  }
+}
+
+.home-loading-spinner {
+  width: 96px;
+  height: 96px;
 }
 
 .home-shell {
@@ -2829,6 +3020,16 @@ button:focus-visible {
   font-size: 24px;
 }
 
+.search-loading {
+  flex-direction: column;
+  gap: 20px;
+}
+
+.search-loading .nuvio-loading-indicator {
+  width: 96px;
+  height: 96px;
+}
+
 .search-loading-shell {
   padding-top: 0;
   padding-bottom: 0;
@@ -3352,15 +3553,6 @@ button:focus-visible {
   text-align: center;
 }
 
-.discover-loading-spinner {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 3px solid rgba(255, 255, 255, 0.12);
-  border-top-color: var(--secondary-color);
-  animation: discoverSpinner 800ms linear infinite;
-}
-
 .discover-loading-label {
   font-size: 18px;
   line-height: 24px;
@@ -3394,12 +3586,6 @@ button:focus-visible {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-@keyframes discoverSpinner {
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -4010,18 +4196,6 @@ button:focus-visible {
 .library-loading-spinner {
   width: 96px;
   height: 96px;
-  animation: librarySpin 1332ms linear infinite;
-}
-
-.library-loading-spinner-track {
-  fill: none;
-  stroke: #9e9e9e;
-  stroke-width: 8;
-  stroke-linecap: round;
-  stroke-dasharray: 188 252;
-  stroke-dashoffset: 0;
-  transform-origin: center;
-  animation: librarySpinnerDash 1332ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 .library-loading-label {
@@ -4459,30 +4633,6 @@ button:focus-visible {
   border-color: transparent;
   box-shadow: none;
   transform: scale(1.1);
-}
-
-@keyframes librarySpin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes librarySpinnerDash {
-  0% {
-    stroke-dasharray: 1 252;
-    stroke-dashoffset: 0;
-  }
-  50% {
-    stroke-dasharray: 188 252;
-    stroke-dashoffset: -64;
-  }
-  100% {
-    stroke-dasharray: 188 252;
-    stroke-dashoffset: -252;
-  }
 }
 
 @keyframes libraryPickerMenuOpen {
@@ -7737,6 +7887,16 @@ button:focus-visible {
   line-height: min(2.08vw, 40px);
 }
 
+.supporters-status {
+  flex-direction: column;
+  gap: min(1.46vw, 28px);
+}
+
+.supporters-status .nuvio-loading-indicator {
+  width: min(5vw, 96px);
+  height: min(5vw, 96px);
+}
+
 .supporters-error-state {
   flex-direction: column;
   gap: min(1.46vw, 28px); /* ATV 14dp -> 28px */
@@ -8013,6 +8173,15 @@ button:focus-visible {
   color: var(--text-secondary);
   font-size: 28px;
   line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-account-loading .nuvio-loading-indicator,
+.settings-account-sync-loading .nuvio-loading-indicator {
+  width: 40px;
+  height: 40px;
 }
 
 .settings-account-description {
@@ -8159,7 +8328,10 @@ button:focus-visible {
 }
 
 .settings-account-sync-loading {
+  flex-direction: row;
   align-items: center;
+  justify-content: center;
+  gap: 16px;
   color: var(--text-secondary);
   font-size: 24px;
   line-height: 1.2;
@@ -10832,7 +11004,7 @@ html.legacy-webos .debug-console-log-frame {
   --player-text-tertiary: var(--text-tertiary);
   --player-subtitle-color: #ffffff;
   --player-subtitle-outline-color: #000000;
-  --player-subtitle-font-size: 100%;
+  --player-subtitle-font-size: 120%;
   --player-html-subtitle-font-size: clamp(30px, 4.4vh, 82px);
   --player-subtitle-font-weight: 500;
   --player-subtitle-shadow: 0 0 2px #000000, 0 0 4px #000000;
@@ -11169,16 +11341,11 @@ html.legacy-webos .debug-console-log-frame {
   position: absolute;
   top: 50%;
   left: 50%;
-  box-sizing: border-box;
-  width: 72px;
-  height: 72px;
-  margin-top: -36px;
-  margin-left: -36px;
-  border-radius: 50%;
-  border: 6px solid rgba(255, 255, 255, 0.18);
-  border-top-color: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 0 22px rgba(0, 0, 0, 0.35);
-  animation: playerLoadingSpinnerRotate 900ms linear infinite;
+  width: 96px;
+  height: 96px;
+  margin-top: -48px;
+  margin-left: -48px;
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .player-loading-backdrop {
@@ -11338,15 +11505,6 @@ html.legacy-webos .debug-console-log-frame {
   }
   to {
     transform: scale(1.04);
-  }
-}
-
-@keyframes playerLoadingSpinnerRotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -12006,36 +12164,102 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .player-pause-overlay.is-still-watching .player-pause-overlay-content {
-  max-width: min(920px, calc(100vw - 112px));
+  left: auto;
+  top: auto;
+  right: var(--tv-safe-gutter);
+  bottom: clamp(32px, 3vh, 46px);
+  transform: none;
+  width: clamp(540px, 35vw, 680px);
+  max-width: calc(100vw - (2 * var(--tv-safe-gutter)));
+  box-sizing: border-box;
 }
 
 .player-still-watching-content {
-  gap: 18px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: clamp(12px, 0.8vw, 18px);
+  padding: clamp(12px, 0.8vw, 16px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: clamp(18px, 1.15vw, 22px);
+  background: rgba(25, 25, 25, 0.89);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+  text-shadow: none;
+}
+
+.player-still-watching-thumb {
+  width: clamp(132px, 8vw, 160px);
+  min-width: clamp(132px, 8vw, 160px);
+  height: clamp(75px, 4.5vw, 90px);
+  border-radius: clamp(11px, 0.7vw, 14px);
+  object-fit: cover;
+}
+
+.player-still-watching-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.player-still-watching-kicker {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: clamp(14px, 0.85vw, 17px);
+  font-weight: 500;
+}
+
+.player-still-watching-title {
+  margin-top: 3px;
+  color: #ffffff;
+  font-size: clamp(18px, 1.15vw, 23px);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-still-watching-status {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: clamp(12px, 0.75vw, 15px);
+  white-space: nowrap;
 }
 
 .player-still-watching-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 6px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .player-still-watching-btn {
-  min-height: 56px;
-  padding: 0 22px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.08);
+  min-height: 42px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
   color: #ffffff;
-  font-size: var(--tv-secondary-text);
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-size: clamp(13px, 0.8vw, 16px);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
-.player-still-watching-btn.is-primary {
-  background: #ffffff;
-  border-color: #ffffff;
-  color: #000000;
+.player-still-watching-btn.is-secondary {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.player-still-watching-btn.focused,
+.player-still-watching-btn:focus {
+  outline: none;
+  border-color: var(--secondary-color);
+  box-shadow: 0 0 0 3px var(--secondary-color);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.player-still-watching-btn-icon {
+  font-size: 0.82em;
+  line-height: 1;
 }
 
 .no-flex-gap .player-pause-overlay-content > * + * {
@@ -12256,6 +12480,32 @@ html.legacy-webos .debug-console-log-frame {
   }
 }
 
+.legacy-tizen .player-pause-overlay.is-still-watching .player-pause-overlay-content,
+.tizen-tv .player-pause-overlay.is-still-watching .player-pause-overlay-content {
+  left: auto;
+  top: auto;
+  right: 40px;
+  bottom: 32px;
+  transform: none;
+  width: 600px;
+  max-width: calc(100vw - 80px);
+  max-height: none;
+  display: flex;
+  overflow: visible;
+}
+
+.legacy-tizen .player-pause-overlay.is-still-watching .player-pause-overlay-content > *,
+.tizen-tv .player-pause-overlay.is-still-watching .player-pause-overlay-content > * {
+  margin-top: 0;
+}
+
+.legacy-tizen .player-still-watching-btn,
+.tizen-tv .player-still-watching-btn {
+  min-height: 42px;
+  padding: 0 13px;
+  border-radius: 999px;
+}
+
 .player-skip-intro {
   position: absolute;
   left: min(3.33vw, 64px);
@@ -12311,9 +12561,9 @@ html.legacy-webos .debug-console-log-frame {
 .player-skip-intro-btn.focused,
 .player-skip-intro-btn:focus,
 .player-skip-intro:focus-within .player-skip-intro-btn {
-  background: var(--secondary-color) !important;
-  color: var(--on-secondary) !important;
-  box-shadow: none;
+  background: var(--player-focus-background) !important;
+  color: var(--player-text-primary) !important;
+  box-shadow: 0 0 0 4px var(--player-focus-ring);
 }
 
 .player-skip-intro-content {
@@ -12989,6 +13239,17 @@ html.legacy-webos .debug-console-log-frame {
   color: rgba(226, 236, 247, 0.74);
 }
 
+.player-dialog-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.player-dialog-loading .nuvio-loading-indicator {
+  width: 48px;
+  height: 48px;
+}
+
 .player-audio-support-message {
   margin-bottom: min(0.83vw, 16px);
   padding: min(0.63vw, 12px) min(0.83vw, 16px);
@@ -13658,7 +13919,9 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .player-subtitle-modal .player-dialog-style-item {
-  grid-template-columns: var(--player-overlay-step-width) minmax(0, 1fr) var(--player-overlay-step-width);
+  grid-template-columns: var(--player-overlay-step-width) minmax(0, 1fr) var(
+      --player-overlay-step-width
+    );
 }
 
 .player-audio-modal .player-dialog-step {
@@ -14657,6 +14920,19 @@ html.legacy-webos .debug-console-log-frame {
   color: var(--text-secondary);
 }
 
+.series-stream-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.series-stream-loading .nuvio-loading-indicator {
+  width: 96px;
+  height: 96px;
+}
+
 .movie-detail-shell .series-detail-vignette {
   background:
     linear-gradient(
@@ -14666,12 +14942,7 @@ html.legacy-webos .debug-console-log-frame {
       rgba(6, 9, 14, 0.66) 72%,
       rgba(6, 9, 14, 0.5) 100%
     ),
-    linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.4) 0%,
-      rgba(0, 0, 0, 0.18) 38%,
-      rgba(0, 0, 0, 0.9) 100%
-    );
+    linear-gradient(180deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.18) 38%, rgba(0, 0, 0, 0.9) 100%);
 }
 
 .movie-detail-content {
@@ -15309,12 +15580,7 @@ html.legacy-webos .debug-console-log-frame {
       rgba(6, 9, 14, 0.66) 72%,
       rgba(6, 9, 14, 0.5) 100%
     ),
-    linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.4) 0%,
-      rgba(0, 0, 0, 0.18) 38%,
-      rgba(0, 0, 0, 0.9) 100%
-    );
+    linear-gradient(180deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.18) 38%, rgba(0, 0, 0, 0.9) 100%);
   transition: opacity 800ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -15574,8 +15840,8 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .series-primary-btn.focused {
-  background: #ffffff;
-  color: #000000;
+  background: var(--focus-bg);
+  color: var(--text-color);
   box-shadow: 0 0 0 4px var(--detail-focus-ring);
   transform: none;
 }
@@ -16459,12 +16725,7 @@ html.legacy-webos .debug-console-log-frame {
       rgba(6, 9, 14, 0.66) 72%,
       rgba(6, 9, 14, 0.5) 100%
     ),
-    linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.4) 0%,
-      rgba(0, 0, 0, 0.2) 40%,
-      rgba(0, 0, 0, 0.82) 100%
-    );
+    linear-gradient(180deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.2) 40%, rgba(0, 0, 0, 0.82) 100%);
 }
 
 .stream-screen-panel {
@@ -16715,12 +16976,9 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .stream-route-chip-spinner {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  border: 1.5px solid currentColor;
-  border-top-color: transparent;
-  animation: streamRouteSpin 700ms linear infinite;
+  width: 42px;
+  height: 42px;
+  color: inherit;
 }
 
 .stream-route-panel-shell {
@@ -16863,12 +17121,9 @@ html.legacy-webos .debug-console-log-frame {
   animation: none !important;
 }
 
-.performance-constrained .player-loading-spinner-ring {
-  animation: playerLoadingSpinnerRotate 900ms linear infinite !important;
-}
-
-.performance-constrained .stream-route-chip-spinner {
-  animation: streamRouteSpin 700ms linear infinite !important;
+.performance-constrained .nuvio-loading-indicator-spoke {
+  animation-duration: 1000ms !important;
+  animation-iteration-count: infinite !important;
 }
 
 .performance-constrained .stream-route-skeleton-line {
@@ -16925,18 +17180,6 @@ html.legacy-webos .debug-console-log-frame {
   transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1) !important;
 }
 
-.performance-constrained .home-loading-spinner {
-  animation: homeLoadingSpin 820ms linear infinite !important;
-}
-
-.performance-constrained .library-loading-spinner {
-  animation: librarySpin 1332ms linear infinite !important;
-}
-
-.performance-constrained .library-loading-spinner-track {
-  animation: librarySpinnerDash 1332ms cubic-bezier(0.4, 0, 0.2, 1) infinite !important;
-}
-
 .performance-constrained .home-content-card.focused {
   transform: scale(1.005) !important;
 }
@@ -16975,6 +17218,13 @@ html.legacy-webos .debug-console-log-frame {
 .performance-constrained .stream-route-panel-shell {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+.performance-constrained.modern-sidebar-blur-capable
+  .modern-sidebar-shell.blur-enabled.expanded:not(.collapsing)
+  .modern-sidebar-panel {
+  backdrop-filter: blur(26px) saturate(1) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1) !important;
 }
 
 .performance-constrained .series-detail-backdrop,
@@ -17255,9 +17505,9 @@ html.legacy-webos .debug-console-log-frame {
 .legacy-webos .player-skip-intro-btn.focused,
 .legacy-webos .player-skip-intro-btn:focus,
 .legacy-webos .player-skip-intro:focus-within .player-skip-intro-btn {
-  background: var(--secondary-color) !important;
-  color: var(--on-secondary) !important;
-  box-shadow: none;
+  background: var(--player-focus-background) !important;
+  color: var(--player-text-primary) !important;
+  box-shadow: 0 0 0 4px var(--player-focus-ring);
 }
 
 .legacy-webos .player-next-episode-card {
@@ -17830,7 +18080,10 @@ html.legacy-webos .debug-console-log-frame {
   height: var(--home-poster-height);
 }
 
-.no-aspect-ratio .home-screen-shell .home-collection-card.is-collection-landscape .home-poster-frame {
+.no-aspect-ratio
+  .home-screen-shell
+  .home-collection-card.is-collection-landscape
+  .home-poster-frame {
   height: var(--home-landscape-poster-height);
 }
 
@@ -18696,9 +18949,9 @@ html.legacy-webos .debug-console-log-frame {
   .player-skip-intro-btn.focused,
   .player-skip-intro-btn:focus,
   .player-skip-intro:focus-within .player-skip-intro-btn {
-    background: var(--secondary-color) !important;
-    color: var(--on-secondary) !important;
-    box-shadow: none;
+    background: var(--player-focus-background) !important;
+    color: var(--player-text-primary) !important;
+    box-shadow: 0 0 0 4px var(--player-focus-ring);
   }
 
   .player-next-episode-card {
@@ -18820,10 +19073,7 @@ html.legacy-webos .debug-console-log-frame {
     margin-bottom 180ms cubic-bezier(0.2, 0, 0, 1) !important;
 }
 
-.performance-constrained
-  .home-screen-shell.home-layout-modern
-  .home-poster-card
-  .content-poster,
+.performance-constrained .home-screen-shell.home-layout-modern .home-poster-card .content-poster,
 .performance-constrained
   .home-screen-shell.home-layout-modern
   .home-poster-card
@@ -18913,7 +19163,7 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .legacy-tizen .player-subtitle-overlay-grid {
-  height: auto;
+  height: 0;
   min-height: 0;
 }
 
@@ -19155,6 +19405,11 @@ html.legacy-webos .debug-console-log-frame {
   margin: 6px 0 5px;
 }
 
+.legacy-webos .stream-route-card-badges-lazy {
+  height: 26px;
+  min-height: 26px;
+}
+
 .legacy-webos .stream-route-stream-badge {
   min-height: 28px;
   padding: 0 10px;
@@ -19290,8 +19545,7 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .stream-route-card.skeleton {
-  display: block;
-  min-height: 160px;
+  pointer-events: none;
 }
 
 .stream-route-card-copy {
@@ -19324,6 +19578,13 @@ html.legacy-webos .debug-console-log-frame {
   gap: 6px;
   margin: 10px 0 8px;
   max-width: 100%;
+}
+
+.stream-route-card-badges-lazy {
+  flex-wrap: nowrap;
+  height: 30px;
+  min-height: 30px;
+  overflow: hidden;
 }
 
 .player-source-badges {
@@ -19556,22 +19817,24 @@ html.legacy-webos .debug-console-log-frame {
   );
   background-size: 220% 100%;
   animation: streamRouteSkeletonShimmer 2.2s ease-in-out infinite;
-  margin-bottom: 14px;
+  margin-top: 12px;
 }
 
-.stream-route-skeleton-line.wide {
+/* Widths/heights mirror the real card rows: heading, quality, then two lines. */
+.stream-route-skeleton-line:first-child {
   width: 34%;
   height: 22px;
+  margin-top: 0;
 }
 
-.stream-route-skeleton-line.short {
+.stream-route-skeleton-line:nth-child(2) {
   width: 12%;
   height: 18px;
+  margin-top: 14px;
 }
 
 .stream-route-skeleton-line:last-child {
   width: 56%;
-  margin-bottom: 0;
 }
 
 @keyframes streamRoutePanelEnter {
@@ -19599,15 +19862,6 @@ html.legacy-webos .debug-console-log-frame {
   }
 }
 
-@keyframes streamRouteSpin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .cast-detail-shell {
   width: 100vw;
   height: 100vh;
@@ -19628,6 +19882,18 @@ html.legacy-webos .debug-console-log-frame {
   text-align: center;
   font-size: 28px;
   color: var(--text-secondary);
+}
+
+.cast-detail-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.cast-detail-loading .nuvio-loading-indicator {
+  width: 96px;
+  height: 96px;
 }
 
 .cast-detail-hero {
@@ -19914,9 +20180,12 @@ html.legacy-webos .debug-console-log-frame {
 .seeall-loading {
   width: 100%;
   padding: 18px 0 8px;
-  text-align: center;
   color: var(--text-secondary);
   font-size: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
 .seeall-shell.discover-seeall-shell {
@@ -19941,8 +20210,12 @@ html.legacy-webos .debug-console-log-frame {
   z-index: 10;
   margin: -24px -48px 24px;
   padding: 24px 48px 18px;
-  background:
-    linear-gradient(180deg, var(--bg-color) 0%, rgb(var(--bg-color-rgb) / 0.96) 72%, rgb(var(--bg-color-rgb) / 0) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--bg-color) 0%,
+    rgb(var(--bg-color-rgb) / 0.96) 72%,
+    rgb(var(--bg-color-rgb) / 0) 100%
+  );
 }
 
 .folder-detail-eyebrow {
@@ -20105,7 +20378,7 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .folder-row-loading {
-  text-align: left;
+  align-items: flex-start;
   padding-top: 0;
 }
 
@@ -20178,8 +20451,8 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .series-primary-btn.focused {
-  background: #ffffff;
-  color: #000000;
+  background: var(--focus-bg);
+  color: var(--text-color);
   border-color: var(--detail-focus-ring);
   transform: none;
 }

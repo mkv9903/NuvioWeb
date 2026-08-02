@@ -1329,6 +1329,9 @@
     <string name="layout_selection_subtitle">Choisis la disposition de ton écran d’accueil</string>
     <string name="layout_selection_continue">Continuer</string>
     <string name="update_title">Mise à jour de l’application</string>
+    <string name="update_installer_required">Utilisez Nuvio WebTV Installer pour mettre à jour l’application sur votre téléviseur.</string>
+    <string name="update_release_notes">Nouveautés</string>
+    <string name="update_release_notes_unavailable">Aucune description de la version n’est disponible.</string>
     <string name="update_downloading">Téléchargement de la mise à jour</string>
     <string name="update_download">Télécharger</string>
     <string name="update_downloading_ellipsis">Téléchargement…</string>
@@ -2529,4 +2532,12 @@
     <string name="unsupported_device_required_platform">Plateforme requise</string>
     <string name="unsupported_device_close">Fermer</string>
     <string name="unsupported_device_unavailable">Indisponible</string>
+    <string name="subtitle_position">Position des sous-titres</string>
+    <string name="subtitle_position_subtitle">Déplacez les sous-titres vers le haut ou le bas de l'écran.</string>
+    <string name="subtitle_font_size_subtitle">Taille du texte utilisée pour les sous-titres pendant la lecture.</string>
+    <string name="subtitle_bold_subtitle">Afficher le texte des sous-titres en gras.</string>
+    <string name="subtitle_outline_subtitle">Dessiner un contour autour du texte des sous-titres pour améliorer la lisibilité.</string>
+    <string name="subtitle_outline_color_subtitle">Couleur du contour des sous-titres.</string>
+    <string name="subtitle_text_color_subtitle">Couleur du texte des sous-titres.</string>
+    <string name="player_error_web_headers_unsupported">Cette source n'est pas compatible avec le lecteur de cet appareil car elle nécessite des en-têtes de requête spéciaux. Essayez une autre source ou contactez le fournisseur de l'extension.</string>
 </resources>

@@ -10,16 +10,27 @@ export const DTS_RESTORE_PROBE_COMMAND = [
   "init=0",
   "rank=0",
   "libav=0",
+  "plus_init=0",
+  "dtsdec=0",
+  "truehd=0",
   "[ -e /var/lib/webosbrew/init.d/restore_dts ] && init=1",
   "grep -q 'avdec_dca=290' /etc/gst/gstcool.conf 2>/dev/null && rank=1",
   "grep -q ' /usr/lib/gstreamer-1.0/libgstlibav.so ' /proc/mounts 2>/dev/null && libav=1",
-  `printf '${DTS_RESTORE_PROBE_PREFIX} init=%s rank=%s libav=%s\\n' "$init" "$rank" "$libav"`
+  "[ -e /var/lib/webosbrew/init.d/restore_dts25 ] && plus_init=1",
+  '[ "$plus_init" = 1 ] && /usr/bin/gst-inspect-1.0 dtsdec >/dev/null 2>&1 && dtsdec=1',
+  '[ "$plus_init" = 1 ] && /usr/bin/gst-inspect-1.0 avdec_truehd >/dev/null 2>&1 && truehd=1',
+  `printf '${DTS_RESTORE_PROBE_PREFIX} init=%s rank=%s libav=%s plus_init=%s dtsdec=%s truehd=%s\\n' "$init" "$rank" "$libav" "$plus_init" "$dtsdec" "$truehd"`
 ].join("; ");
 
 const EMPTY_DTS_RESTORE_STATE = Object.freeze({
   installed: false,
   decoderRankEnabled: false,
   libavMounted: false,
+  plusInstalled: false,
+  dtsDecoderAvailable: false,
+  trueHdDecoderAvailable: false,
+  dtsActive: false,
+  trueHdActive: false,
   active: false
 });
 
@@ -40,9 +51,7 @@ function settleWithin(promise, timeoutMs = AUDIO_CAPABILITY_TIMEOUT_MS) {
 }
 
 export function parseDtsRestoreProbeOutput(result) {
-  const output = typeof result === "string"
-    ? result
-    : String(result?.stdoutString || "");
+  const output = typeof result === "string" ? result : String(result?.stdoutString || "");
   const match = output.match(/NUVIO_DTS_RESTORE\s+init=([01])\s+rank=([01])\s+libav=([01])/);
   if (!match) {
     return { ...EMPTY_DTS_RESTORE_STATE };
@@ -50,17 +59,30 @@ export function parseDtsRestoreProbeOutput(result) {
   const installed = match[1] === "1";
   const decoderRankEnabled = match[2] === "1";
   const libavMounted = match[3] === "1";
+  const plusMatch = output.match(/\s+plus_init=([01])\s+dtsdec=([01])\s+truehd=([01])/);
+  const plusInstalled = plusMatch?.[1] === "1";
+  const dtsDecoderAvailable = plusMatch?.[2] === "1";
+  const trueHdDecoderAvailable = plusMatch?.[3] === "1";
+  const legacyActive = decoderRankEnabled && libavMounted;
+  const dtsActive = legacyActive || (plusInstalled && dtsDecoderAvailable);
+  const trueHdActive = plusInstalled && trueHdDecoderAvailable;
   return {
     installed,
     decoderRankEnabled,
     libavMounted,
-    active: decoderRankEnabled && libavMounted
+    plusInstalled,
+    dtsDecoderAvailable,
+    trueHdDecoderAvailable,
+    dtsActive,
+    trueHdActive,
+    active: dtsActive
   };
 }
 
 export function deriveWebOsAudioCapabilities({ edidType = "", dtsRestore = null } = {}) {
   const normalizedEdid = String(edidType || "").toLowerCase();
-  const dtsRestoreActive = Boolean(dtsRestore?.active);
+  const dtsRestoreActive = Boolean(dtsRestore?.dtsActive ?? dtsRestore?.active);
+  const trueHdRestoreActive = Boolean(dtsRestore?.trueHdActive);
   const dtsFromEdid = normalizedEdid.includes("dts");
   const trueHdFromEdid = normalizedEdid.includes("truehd");
   const unsupportedAudioCodecs = [];
@@ -68,7 +90,7 @@ export function deriveWebOsAudioCapabilities({ edidType = "", dtsRestore = null 
   if (!dtsFromEdid && !dtsRestoreActive) {
     unsupportedAudioCodecs.push("dts");
   }
-  if (!trueHdFromEdid) {
+  if (!trueHdFromEdid && !trueHdRestoreActive) {
     unsupportedAudioCodecs.push("truehd");
   }
 
@@ -76,11 +98,17 @@ export function deriveWebOsAudioCapabilities({ edidType = "", dtsRestore = null 
     unsupportedAudioCodecs,
     dts: {
       supported: dtsFromEdid || dtsRestoreActive,
-      source: dtsFromEdid ? "edid" : dtsRestoreActive ? "dts_restore" : "none"
+      source: dtsFromEdid
+        ? "edid"
+        : dtsRestoreActive
+          ? dtsRestore?.plusInstalled
+            ? "dts_restore_plus"
+            : "dts_restore"
+          : "none"
     },
     truehd: {
-      supported: trueHdFromEdid,
-      source: trueHdFromEdid ? "edid" : "none"
+      supported: trueHdFromEdid || trueHdRestoreActive,
+      source: trueHdFromEdid ? "edid" : trueHdRestoreActive ? "dts_restore_plus" : "none"
     },
     dtsRestore: dtsRestore ? { ...dtsRestore } : { ...EMPTY_DTS_RESTORE_STATE }
   };
@@ -134,12 +162,9 @@ export function detectWebOsAudioCapabilities({ forceRefresh = false } = {}) {
     return detectionPromise;
   }
 
-  detectionPromise = Promise.all([
-    requestEdidType(),
-    requestDtsRestoreState()
-  ]).then(([edidType, dtsRestore]) => (
-    deriveWebOsAudioCapabilities({ edidType, dtsRestore })
-  )).catch(() => deriveWebOsAudioCapabilities());
+  detectionPromise = Promise.all([requestEdidType(), requestDtsRestoreState()])
+    .then(([edidType, dtsRestore]) => deriveWebOsAudioCapabilities({ edidType, dtsRestore }))
+    .catch(() => deriveWebOsAudioCapabilities());
 
   return detectionPromise;
 }

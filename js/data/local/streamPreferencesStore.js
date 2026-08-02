@@ -60,7 +60,14 @@ export const StreamPreferencesStore = {
     const entry = this.getEntry(contentId, videoId, profileId);
     const cachedAtMs = Number(entry?.cachedAtMs || 0);
     const ageMs = Date.now() - cachedAtMs;
-    if (!entry || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0 || cachedAtMs <= 0 || ageMs < 0 || ageMs > maxAgeMs) {
+    if (
+      !entry ||
+      !Number.isFinite(maxAgeMs) ||
+      maxAgeMs <= 0 ||
+      cachedAtMs <= 0 ||
+      ageMs < 0 ||
+      ageMs > maxAgeMs
+    ) {
       return null;
     }
     return { ...entry, streamId: String(entry.streamId || "") || null };
@@ -78,7 +85,8 @@ export const StreamPreferencesStore = {
       key,
       streamId: sid,
       cachedAtMs: Date.now(),
-      bingeGroup: String(metadata?.bingeGroup || "").trim() || null
+      bingeGroup: String(metadata?.bingeGroup || "").trim() || null,
+      resumeIdentity: String(metadata?.resumeIdentity || "").trim() || null
     });
     if (entries.length > MAX_ENTRIES) {
       entries.length = MAX_ENTRIES;

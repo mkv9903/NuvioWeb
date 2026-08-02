@@ -1753,6 +1753,9 @@
     <string name="layout_selection_subtitle">Escolhe o esquema da tua página inicial</string>
     <string name="layout_selection_continue">Continuar</string>
     <string name="update_title">Atualização da App</string>
+    <string name="update_installer_required">Utilize o Nuvio WebTV Installer para atualizar a app na TV.</string>
+    <string name="update_release_notes">Novidades</string>
+    <string name="update_release_notes_unavailable">Não está disponível uma descrição da versão.</string>
     <string name="update_downloading">A transferir atualização</string>
     <string name="update_download">Transferir</string>
     <string name="update_downloading_ellipsis">A transferir…</string>
@@ -2622,4 +2625,12 @@
     <string name="unsupported_device_required_platform">Plataforma necessária</string>
     <string name="unsupported_device_close">Fechar</string>
     <string name="unsupported_device_unavailable">Indisponível</string>
+    <string name="subtitle_position">Posição das legendas</string>
+    <string name="subtitle_position_subtitle">Move as legendas para cima ou para baixo no ecrã.</string>
+    <string name="subtitle_font_size_subtitle">Tamanho do texto utilizado nas legendas durante a reprodução.</string>
+    <string name="subtitle_bold_subtitle">Mostra o texto das legendas a negrito.</string>
+    <string name="subtitle_outline_subtitle">Desenha um contorno à volta do texto das legendas para melhorar a legibilidade.</string>
+    <string name="subtitle_outline_color_subtitle">Cor do contorno das legendas.</string>
+    <string name="subtitle_text_color_subtitle">Cor do texto das legendas.</string>
+    <string name="player_error_web_headers_unsupported">Esta fonte não é compatível com o leitor deste dispositivo porque requer cabeçalhos de pedido especiais. Experimente outra fonte ou contacte o fornecedor do add-on.</string>
 </resources>

@@ -741,6 +741,9 @@
     <string name="layout_selection_subtitle">Elige tu diseño de pantalla de inicio</string>
     <string name="layout_selection_continue">Continuar</string>
     <string name="update_title">Actualización de la aplicación</string>
+    <string name="update_installer_required">Usa Nuvio WebTV Installer para actualizar la aplicación en tu televisor.</string>
+    <string name="update_release_notes">Novedades</string>
+    <string name="update_release_notes_unavailable">No hay ninguna descripción de la versión disponible.</string>
     <string name="update_downloading">Descargando actualización</string>
     <string name="update_unknown_sources">Permite instalaciones de fuentes desconocidas para continuar.</string>
     <string name="account_title">Cuenta</string>
@@ -1105,4 +1108,20 @@
     <string name="unsupported_device_required_platform">Plataforma requerida</string>
     <string name="unsupported_device_close">Cerrar</string>
     <string name="unsupported_device_unavailable">No disponible</string>
+    <string name="still_watching_title">¿Sigues viendo?</string>
+    <string name="still_watching_continue">Reproducir</string>
+    <string name="still_watching_exit">Salir</string>
+    <string name="still_watching_countdown">Deteniendo en %1$d</string>
+    <string name="still_watching_setting_title">¿Sigues viendo?</string>
+    <string name="still_watching_setting_sub">Mostrar aviso después de varios episodios reproducidos automáticamente.</string>
+    <string name="still_watching_threshold_title">Límite de episodios</string>
+    <string name="still_watching_threshold_sub">Cantidad de episodios reproducidos automáticamente antes de mostrar el aviso.</string>
+    <string name="subtitle_position">Posición de subtítulos</string>
+    <string name="subtitle_position_subtitle">Mueve los subtítulos hacia arriba o hacia abajo en la pantalla.</string>
+    <string name="subtitle_font_size_subtitle">Tamaño del texto usado para los subtítulos durante la reproducción.</string>
+    <string name="subtitle_bold_subtitle">Muestra el texto de los subtítulos en negrita.</string>
+    <string name="subtitle_outline_subtitle">Dibuja un contorno alrededor del texto de los subtítulos para mejorar la legibilidad.</string>
+    <string name="subtitle_outline_color_subtitle">Color del contorno de los subtítulos.</string>
+    <string name="subtitle_text_color_subtitle">Color del texto de los subtítulos.</string>
+    <string name="player_error_web_headers_unsupported">Esta fuente no es compatible con el reproductor de este dispositivo porque requiere encabezados de solicitud especiales. Prueba con otra fuente o contacta con el proveedor del complemento.</string>
 </resources>

@@ -1555,6 +1555,9 @@
     <string name="layout_selection_subtitle">选择您的首页布局</string>
     <string name="layout_selection_continue">继续</string>
     <string name="update_title">应用更新</string>
+    <string name="update_installer_required">请使用 Nuvio WebTV Installer 更新电视上的应用。</string>
+    <string name="update_release_notes">新增内容</string>
+    <string name="update_release_notes_unavailable">暂无版本说明。</string>
     <string name="update_downloading">正在下载更新</string>
     <string name="update_download">下载</string>
     <string name="update_downloading_ellipsis">下载中…</string>
@@ -2183,4 +2186,12 @@
     <string name="unsupported_device_required_platform">所需平台</string>
     <string name="unsupported_device_close">关闭</string>
     <string name="unsupported_device_unavailable">不可用</string>
+    <string name="subtitle_position">字幕位置</string>
+    <string name="subtitle_position_subtitle">在屏幕上向上或向下移动字幕。</string>
+    <string name="subtitle_font_size_subtitle">播放时字幕所用的文字大小。</string>
+    <string name="subtitle_bold_subtitle">以粗体显示字幕文字。</string>
+    <string name="subtitle_outline_subtitle">在字幕文字周围绘制描边以提高可读性。</string>
+    <string name="subtitle_outline_color_subtitle">字幕描边的颜色。</string>
+    <string name="subtitle_text_color_subtitle">字幕文字的颜色。</string>
+    <string name="player_error_web_headers_unsupported">此来源需要特殊的请求头，因此与本设备的播放器不兼容。请尝试其他来源或联系此附加组件的提供方。</string>
 </resources>

@@ -1,4 +1,5 @@
-import "./runtime/polyfills.js";
+/* global __NUVIO_APP_VERSION__ */
+
 import "./core/diagnostics/consoleDebugBuffer.js";
 import { detailWatchedEnrichmentService } from "./data/repository/detailWatchedEnrichmentService.js";
 import { Router } from "./ui/navigation/router.js";
@@ -17,6 +18,8 @@ import { warmStreamingLibs } from "./runtime/loadStreamingLibs.js";
 import { Platform } from "./platform/index.js";
 import { LocalStore } from "./core/storage/localStore.js";
 import { I18n } from "./i18n/index.js";
+import { getLatestAppUpdate } from "./core/update/appUpdateService.js";
+import { showAppUpdatePrompt } from "./ui/components/appUpdatePrompt.js";
 
 (function applyLegacyPatches() {
   const originalGetElementById = document.getElementById;
@@ -34,11 +37,42 @@ const GUEST_QR_BYPASS_KEY = "skipAuthQrGate";
 const SIGNED_OUT_ALLOWED_ROUTES = new Set(["trakt"]);
 let hasSelectedProfileThisSession = false;
 let appShellRendered = false;
+let updateCheckStarted = false;
+
+const APP_VERSION = typeof __NUVIO_APP_VERSION__ !== "undefined" ? __NUVIO_APP_VERSION__ : "0.0.0";
 
 function markBootStage(stage) {
   const guard = globalThis.NuvioBootGuard;
   if (guard && typeof guard.stage === "function") {
     guard.stage(stage);
+  }
+}
+
+async function waitForInitialRoute(timeoutMs = 15000) {
+  const startedAt = Date.now();
+  while (!Router.getCurrent() && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return Boolean(Router.getCurrent());
+}
+
+async function checkForAppUpdateOnStartup() {
+  if (updateCheckStarted) {
+    return;
+  }
+  updateCheckStarted = true;
+
+  try {
+    const update = await getLatestAppUpdate({ currentVersion: APP_VERSION });
+    if (!update) {
+      return;
+    }
+    if (!(await waitForInitialRoute())) {
+      return;
+    }
+    showAppUpdatePrompt(update);
+  } catch (error) {
+    console.warn("App update check failed", error);
   }
 }
 
@@ -86,6 +120,13 @@ function isLowEndDevice() {
   return lowCpu || lowMem;
 }
 
+function getChromiumMajorVersion() {
+  const userAgent = String(globalThis.navigator?.userAgent || "");
+  const match = userAgent.match(/(?:chrome|chromium)\/(\d{2,3})/i);
+  const version = Number(match?.[1] || 0);
+  return Number.isFinite(version) ? version : 0;
+}
+
 function applyPerformanceMode() {
   const constrained = Platform.isWebOS() || Platform.isTizen() || isLowEndDevice();
   const webOsMajorVersion = Platform.isWebOS() ? Number(Platform.getWebOsMajorVersion() || 0) : 0;
@@ -93,20 +134,23 @@ function applyPerformanceMode() {
   const legacyWebOs38 = Platform.isWebOS() && webOsMajorVersion > 0 && webOsMajorVersion <= 3;
   const legacyTizen = Platform.isTizen();
   const rootClasses = document.documentElement.classList;
+  const modernWebOs = Platform.isWebOS() && getChromiumMajorVersion() >= 120;
+  const modernSidebarBlurCapable =
+    !rootClasses.contains("no-backdrop-filter") && ((!constrained && !legacyTizen) || modernWebOs);
   document.documentElement.classList.toggle("performance-constrained", constrained);
   document.body.classList.toggle("performance-constrained", constrained);
+  document.documentElement.classList.toggle(
+    "modern-sidebar-blur-capable",
+    modernSidebarBlurCapable
+  );
+  document.body.classList.toggle("modern-sidebar-blur-capable", modernSidebarBlurCapable);
   document.documentElement.classList.toggle("legacy-webos", legacyWebOs);
   document.body.classList.toggle("legacy-webos", legacyWebOs);
   document.documentElement.classList.toggle("legacy-webos38", legacyWebOs38);
   document.body.classList.toggle("legacy-webos38", legacyWebOs38);
   document.documentElement.classList.toggle("legacy-tizen", legacyTizen);
   document.body.classList.toggle("legacy-tizen", legacyTizen);
-  [
-    "no-flex-gap",
-    "no-aspect-ratio",
-    "no-css-math",
-    "no-backdrop-filter"
-  ].forEach((className) => {
+  ["no-flex-gap", "no-aspect-ratio", "no-css-math", "no-backdrop-filter"].forEach((className) => {
     document.body.classList.toggle(className, rootClasses.contains(className));
   });
 }
@@ -167,9 +211,10 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
       console.warn("Stream badge image prerender failed", error);
     });
   }
-  const resumeRoute = restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
-    ? Router.consumeWebOsResumeRoute()
-    : null;
+  const resumeRoute =
+    restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
+      ? Router.consumeWebOsResumeRoute()
+      : null;
   if (resumeRoute?.route) {
     await Router.navigate(resumeRoute.route, resumeRoute.params || {}, {
       replaceHistory: true,
@@ -346,6 +391,7 @@ async function bootstrapApp() {
   ThemeManager.apply();
   I18n.apply();
   warmStreamingLibs({ delayMs: 1400 });
+  void checkForAppUpdateOnStartup();
 
   markBootStage("Restoring session");
   AuthManager.subscribe((state) => {
@@ -372,7 +418,11 @@ async function bootstrapApp() {
             console.warn("Failed to enter with last profile", error);
             ProfileManager.clearActiveProfile();
             if (Router.getCurrent() !== "profileSelection") {
-              Router.navigate("profileSelection", {}, { replaceHistory: true, skipStackPush: true });
+              Router.navigate(
+                "profileSelection",
+                {},
+                { replaceHistory: true, skipStackPush: true }
+              );
             }
           });
           return;

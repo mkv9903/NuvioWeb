@@ -890,6 +890,9 @@
     <string name="layout_selection_subtitle">Wybierz układ ekranu głównego</string>
     <string name="layout_selection_continue">Kontynuuj</string>
     <string name="update_title">Aktualizacja aplikacji</string>
+    <string name="update_installer_required">Użyj Nuvio WebTV Installer, aby zaktualizować aplikację na telewizorze.</string>
+    <string name="update_release_notes">Co nowego</string>
+    <string name="update_release_notes_unavailable">Opis wydania jest niedostępny.</string>
     <string name="update_downloading">Pobieranie aktualizacji</string>
     <string name="update_download">Pobierz</string>
     <string name="update_downloading_ellipsis">Pobieranie…</string>
@@ -2507,4 +2510,12 @@
     <string name="unsupported_device_required_platform">Wymagana platforma</string>
     <string name="unsupported_device_close">Zamknij</string>
     <string name="unsupported_device_unavailable">Niedostępne</string>
+    <string name="subtitle_position">Pozycja napisów</string>
+    <string name="subtitle_position_subtitle">Przesuń napisy w górę lub w dół ekranu.</string>
+    <string name="subtitle_font_size_subtitle">Rozmiar tekstu używany dla napisów podczas odtwarzania.</string>
+    <string name="subtitle_bold_subtitle">Wyświetlaj tekst napisów pogrubiony.</string>
+    <string name="subtitle_outline_subtitle">Rysuj obrys wokół tekstu napisów dla lepszej czytelności.</string>
+    <string name="subtitle_outline_color_subtitle">Kolor obrysu napisów.</string>
+    <string name="subtitle_text_color_subtitle">Kolor tekstu napisów.</string>
+    <string name="player_error_web_headers_unsupported">To źródło nie jest zgodne z odtwarzaczem tego urządzenia, ponieważ wymaga specjalnych nagłówków żądania. Wypróbuj inne źródło lub skontaktuj się z dostawcą dodatku.</string>
 </resources>

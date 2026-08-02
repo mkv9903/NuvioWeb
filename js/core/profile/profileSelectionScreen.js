@@ -365,11 +365,10 @@ export const ProfileSelectionScreen = {
 
     const skipInitialProfileSync = Boolean(params?.skipInitialProfileSync);
     const profilePinEnabled = skipInitialProfileSync
-      ? (params?.profilePinEnabled || {})
-      : (await Promise.all([
-          ProfileSyncService.pull(),
-          ProfileSyncService.pullProfileLockStates()
-        ]))[1];
+      ? params?.profilePinEnabled || {}
+      : (
+          await Promise.all([ProfileSyncService.pull(), ProfileSyncService.pullProfileLockStates()])
+        )[1];
     this.profiles = await ProfileManager.getProfiles();
     this.profilePinEnabled = profilePinEnabled;
     this.lastProfileFocusKey = `profile:${this.activeProfileId || "1"}`;
@@ -443,7 +442,7 @@ export const ProfileSelectionScreen = {
     const visibleProfiles = this.getVisibleProfiles();
     const canAddProfile = visibleProfiles.length < MAX_PROFILES;
     const totalItems = visibleProfiles.length + (canAddProfile ? 1 : 0);
-    const gridClass = totalItems >= 6 ? "profile-grid profile-grid-compact" : "profile-grid";
+    const gridClass = totalItems >= 5 ? "profile-grid profile-grid-compact" : "profile-grid";
     const title = this.isManagementMode
       ? t("profile_manage_title", {}, "Manage Profiles")
       : t("profile_selection_title", {}, "Who's watching?");
@@ -458,7 +457,7 @@ export const ProfileSelectionScreen = {
     const pinScreenPhaseClass = isPinActive
       ? ` is-pin-${escapeHtml(this.pinOverlayPhase || "open")}`
       : "";
-    const compactGridScreenClass = totalItems >= 6 ? " profile-screen-compact-grid" : "";
+    const compactGridScreenClass = totalItems >= 5 ? " profile-screen-compact-grid" : "";
 
     this.container.innerHTML = `
       <div class="profile-screen${pinScreenPhaseClass}${compactGridScreenClass}">

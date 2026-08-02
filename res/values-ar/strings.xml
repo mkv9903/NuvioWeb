@@ -1139,6 +1139,9 @@
     <string name="layout_selection_subtitle">اختر تنسيق شاشتك الرئيسية</string>
     <string name="layout_selection_continue">متابعة</string>
     <string name="update_title">تحديث التطبيق</string>
+    <string name="update_installer_required">استخدم Nuvio WebTV Installer لتحديث التطبيق على التلفاز.</string>
+    <string name="update_release_notes">ما الجديد</string>
+    <string name="update_release_notes_unavailable">لا يتوفر وصف للإصدار.</string>
     <string name="update_downloading">جاري تحميل التحديث</string>
     <string name="update_download">تنزيل</string>
     <string name="update_downloading_ellipsis">جاري التحميل…</string>
@@ -1374,4 +1377,20 @@
     <string name="unsupported_device_required_platform">النظام المطلوب</string>
     <string name="unsupported_device_close">إغلاق</string>
     <string name="unsupported_device_unavailable">غير متاح</string>
+    <string name="still_watching_title">هل ما زلت تشاهد؟</string>
+    <string name="still_watching_continue">تشغيل</string>
+    <string name="still_watching_exit">خروج</string>
+    <string name="still_watching_countdown">سيوقف خلال %1$d</string>
+    <string name="still_watching_setting_title">تنبيه الخمول</string>
+    <string name="still_watching_setting_sub">إظهار تنبيه بعد تشغيل عدة حلقات متتالية تلقائياً.</string>
+    <string name="still_watching_threshold_title">عدد الحلقات المتتالية</string>
+    <string name="still_watching_threshold_sub">عدد الحلقات التلقائية المطلوبة لإظهار التنبيه.</string>
+    <string name="subtitle_position">موضع الترجمة</string>
+    <string name="subtitle_position_subtitle">حرّك الترجمة لأعلى أو لأسفل على الشاشة.</string>
+    <string name="subtitle_font_size_subtitle">حجم النص المستخدم للترجمة أثناء التشغيل.</string>
+    <string name="subtitle_bold_subtitle">عرض نص الترجمة بخط عريض.</string>
+    <string name="subtitle_outline_subtitle">رسم إطار حول نص الترجمة لتحسين وضوح القراءة.</string>
+    <string name="subtitle_outline_color_subtitle">لون إطار الترجمة.</string>
+    <string name="subtitle_text_color_subtitle">لون نص الترجمة.</string>
+    <string name="player_error_web_headers_unsupported">هذا المصدر غير متوافق مع مشغّل هذا الجهاز لأنه يتطلب ترويسات طلب خاصة. جرّب مصدرًا آخر أو تواصل مع مزوّد الإضافة.</string>
 </resources>

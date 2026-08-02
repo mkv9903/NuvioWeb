@@ -10,16 +10,14 @@ import {
   PosterOptionsDialogController,
   posterItemFromNode
 } from "../../components/posterOptionsMenu.js";
-import {
-  isTitleItemWatched,
-  renderTitleWatchedBadge
-} from "../../components/watchedTitleBadge.js";
+import { isTitleItemWatched, renderTitleWatchedBadge } from "../../components/watchedTitleBadge.js";
 import {
   activateLegacySidebarAction,
   bindRootSidebarEvents,
   getRootSidebarNodes,
   getRootSidebarSelectedNode,
   getSidebarProfileState,
+  focusWithoutAutoScroll,
   isSelectedSidebarAction,
   isRootSidebarNode,
   renderRootSidebar,
@@ -27,6 +25,7 @@ import {
   setModernSidebarPillIconOnly,
   setLegacySidebarExpanded
 } from "../../components/sidebarNavigation.js";
+import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 
 const POSTER_HOLD_DELAY_MS = 650;
 const PICKER_MENU_EXIT_MS = 160;
@@ -306,7 +305,7 @@ export const LibraryScreen = {
       }
     });
     target.classList.add("focused");
-    target.focus();
+    focusWithoutAutoScroll(target);
     const sidebarFocused = this.isSidebarNode(target);
     this.focusZone = sidebarFocused ? "sidebar" : "content";
     if (!this.layoutPrefs?.modernSidebar) {
@@ -337,9 +336,7 @@ export const LibraryScreen = {
         ${this.renderSidebar()}
         <main class="home-main library-main">
           <section class="library-loading-state">
-            <svg class="library-loading-spinner" viewBox="0 0 96 96" aria-hidden="true" focusable="false">
-              <circle class="library-loading-spinner-track" cx="48" cy="48" r="40"></circle>
-            </svg>
+            ${renderLoadingIndicator({ className: "library-loading-spinner" })}
             <div class="library-loading-label">${escapeHtml(t("library_syncing_library", {}, "Loading library"))}</div>
           </section>
         </main>
@@ -585,6 +582,7 @@ export const LibraryScreen = {
                        data-item-title="${escapeHtml(item.name || item.id || "Untitled")}"
                        data-poster-src="${escapeHtml(item.poster || "")}"
                        data-backdrop-src="${escapeHtml(item.background || "")}"
+                       data-addon-base-url="${escapeHtml(item.addonBaseUrl || "")}"
                        data-focus-key="${escapeHtml(focusKey)}">
                 <div class="library-grid-poster${item.poster ? "" : " placeholder"}"${item.poster ? ` style="background-image:url('${escapeHtml(item.poster)}')"` : ""}>
                   ${isWatched ? renderTitleWatchedBadge({ className: "library-watched-badge", iconClassName: "library-watched-badge-svg" }) : ""}
@@ -919,7 +917,13 @@ export const LibraryScreen = {
           Router.navigate("detail", {
             itemId: target.id,
             itemType: target.type || "movie",
-            fallbackTitle: target.title || "Untitled"
+            fallbackTitle: target.title || "Untitled",
+            fallbackPoster: target.poster || "",
+            fallbackBackground: target.background || "",
+            addonBaseUrl: target.addonBaseUrl || "",
+            addonId: target.addonId || "",
+            addonName: target.addonName || "",
+            catalogType: target.catalogType || target.type || "movie"
           });
         },
         onDismiss: () => {

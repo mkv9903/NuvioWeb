@@ -1371,6 +1371,9 @@
     <string name="layout_selection_subtitle">Vyberte rozvržení domovské obrazovky</string>
     <string name="layout_selection_continue">Pokračovat</string>
     <string name="update_title">Aktualizace aplikace</string>
+    <string name="update_installer_required">K aktualizaci aplikace v televizoru použijte Nuvio WebTV Installer.</string>
+    <string name="update_release_notes">Co je nového</string>
+    <string name="update_release_notes_unavailable">Popis vydání není k dispozici.</string>
     <string name="update_downloading">Stahování aktualizace</string>
     <string name="update_download">Stáhnout</string>
     <string name="update_downloading_ellipsis">Stahování…</string>
@@ -1819,4 +1822,20 @@
     <string name="unsupported_device_required_platform">Požadovaná platforma</string>
     <string name="unsupported_device_close">Zavřít</string>
     <string name="unsupported_device_unavailable">Nedostupné</string>
+    <string name="still_watching_title">Stále sledujete?</string>
+    <string name="still_watching_continue">Přehrát</string>
+    <string name="still_watching_exit">Ukončit</string>
+    <string name="still_watching_countdown">Zastavení za %1$d</string>
+    <string name="still_watching_setting_title">Stále sledujete?</string>
+    <string name="still_watching_setting_sub">Zeptat se po sobě jdoucích automaticky přehraných epizodách.</string>
+    <string name="still_watching_threshold_title">Práh počtu epizod</string>
+    <string name="still_watching_threshold_sub">Počet automaticky přehraných epizod, po kterém se zobrazí dotaz.</string>
+    <string name="subtitle_position">Pozice titulků</string>
+    <string name="subtitle_position_subtitle">Posune titulky nahoru nebo dolů po obrazovce.</string>
+    <string name="subtitle_font_size_subtitle">Velikost textu použitá pro titulky během přehrávání.</string>
+    <string name="subtitle_bold_subtitle">Zobrazit text titulků tučně.</string>
+    <string name="subtitle_outline_subtitle">Vykreslit obrys kolem textu titulků pro lepší čitelnost.</string>
+    <string name="subtitle_outline_color_subtitle">Barva obrysu titulků.</string>
+    <string name="subtitle_text_color_subtitle">Barva textu titulků.</string>
+    <string name="player_error_web_headers_unsupported">Tento zdroj není kompatibilní s přehrávačem tohoto zařízení, protože vyžaduje speciální hlavičky požadavku. Zkuste jiný zdroj nebo kontaktujte poskytovatele doplňku.</string>
 </resources>

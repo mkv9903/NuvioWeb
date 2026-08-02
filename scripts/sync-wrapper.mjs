@@ -159,6 +159,7 @@ async function syncBuild(targetDir) {
   ]);
 
   await cp(path.join(distDir, "app.bundle.js"), path.join(targetDir, "app.bundle.js"));
+  await cp(path.join(distDir, "core-js.bundle.js"), path.join(targetDir, "core-js.bundle.js"));
   await cp(path.join(distDir, "boot-guard.js"), path.join(targetDir, "boot-guard.js"));
   await cp(path.join(distDir, "youtube-proxy.html"), path.join(targetDir, "youtube-proxy.html"));
   try {
@@ -206,6 +207,7 @@ function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
 </head>
 <body>
   <script src="boot-guard.js"></script>
+  <script src="core-js.bundle.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
   <script>window.__NUVIO_PLATFORM__ = "webos";</script>
   <script src="nuvio.env.js"></script>
   <script src="assets/libs/qrcode-generator.js"></script>
@@ -227,6 +229,7 @@ function buildTizenIndexHtml() {
   <meta name="viewport" content="width=1920, height=1080, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>${appName}</title>
+  <script src="$WEBAPIS/webapis/webapis.js"></script>
   <script src="assets/runtime/legacy-features.js"></script>
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/layout.css" />
@@ -235,6 +238,7 @@ function buildTizenIndexHtml() {
 </head>
 <body>
   <script src="boot-guard.js"></script>
+  <script src="core-js.bundle.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
   <script defer src="main.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
 </body>
 </html>
@@ -490,10 +494,7 @@ function upsertTizenWidgetVersion(xml, version) {
 function upsertTizenRequiredVersion(xml, version) {
   const applicationPattern = /<tizen:application\b([^>]*?)\brequired_version="[^"]*"([^>]*)\/>/;
   if (applicationPattern.test(xml)) {
-    return xml.replace(
-      applicationPattern,
-      `<tizen:application$1required_version="${version}"$2/>`
-    );
+    return xml.replace(applicationPattern, `<tizen:application$1required_version="${version}"$2/>`);
   }
 
   return xml.replace(

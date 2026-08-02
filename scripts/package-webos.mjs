@@ -73,6 +73,7 @@ function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
 </head>
 <body>
   <script src="boot-guard.js"></script>
+  <script src="core-js.bundle.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
   <script>window.__NUVIO_PLATFORM__ = "webos";</script>
   <script src="nuvio.env.js"></script>
   <script src="assets/libs/qrcode-generator.js"></script>
@@ -162,12 +163,7 @@ async function packageWebOs() {
 
   console.log("creating webOS IPK...");
   try {
-    await runWebOsToolsBinary("ares-package", [
-      appStageDir,
-      serviceStageDir,
-      "--outdir",
-      rootDir
-    ]);
+    await runWebOsToolsBinary("ares-package", [appStageDir, serviceStageDir, "--outdir", rootDir]);
   } catch (error) {
     const { version } = await readAppMetadata();
     const expectedIpk = path.join(rootDir, `space.nuvio.webos_${version}_all.ipk`);

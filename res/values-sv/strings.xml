@@ -903,6 +903,9 @@
     <string name="layout_selection_subtitle">Välj din hemskärmslayout</string>
     <string name="layout_selection_continue">Fortsätt</string>
     <string name="update_title">Appuppdatering</string>
+    <string name="update_installer_required">Använd Nuvio WebTV Installer för att uppdatera appen på TV:n.</string>
+    <string name="update_release_notes">Nyheter</string>
+    <string name="update_release_notes_unavailable">Ingen versionsbeskrivning är tillgänglig.</string>
     <string name="update_downloading">Laddar ner uppdatering</string>
     <string name="update_download">Ladda ner</string>
     <string name="update_downloading_ellipsis">Laddar ner…</string>
@@ -1412,6 +1415,7 @@
     <string name="collections_card_subtitle">Gruppera kataloger i mappar på din hemskärm</string>
     <string name="collections_tab_all">Alla</string>
     <string name="collections_tab_combined">Kombinerat</string>
+    <string name="common_all">Alla</string>
     <string name="detail.resume">Fortsätt</string>
     <string name="detail.resumeEpisodeShort">Fortsätt S{{season}}E{{episode}}</string>
     <string name="detail.playFromBeginning">Spela från början</string>
@@ -1432,4 +1436,20 @@
     <string name="unsupported_device_required_platform">Plattform som krävs</string>
     <string name="unsupported_device_close">Stäng</string>
     <string name="unsupported_device_unavailable">Inte tillgänglig</string>
+    <string name="still_watching_title">Tittar du fortfarande?</string>
+    <string name="still_watching_continue">Spela</string>
+    <string name="still_watching_exit">Avsluta</string>
+    <string name="still_watching_countdown">Stoppar om %1$d</string>
+    <string name="still_watching_setting_title">Tittar du fortfarande?</string>
+    <string name="still_watching_setting_sub">Fråga efter flera automatiskt uppspelade avsnitt i följd.</string>
+    <string name="still_watching_threshold_title">Avsnittsgräns</string>
+    <string name="still_watching_threshold_sub">Antal automatiskt uppspelade avsnitt innan frågan visas.</string>
+    <string name="subtitle_position">Undertextposition</string>
+    <string name="subtitle_position_subtitle">Flytta undertexterna uppåt eller nedåt på skärmen.</string>
+    <string name="subtitle_font_size_subtitle">Textstorlek som används för undertexter under uppspelning.</string>
+    <string name="subtitle_bold_subtitle">Visa undertexten med fet stil.</string>
+    <string name="subtitle_outline_subtitle">Rita en kontur runt undertexten för bättre läsbarhet.</string>
+    <string name="subtitle_outline_color_subtitle">Färg på undertextens kontur.</string>
+    <string name="subtitle_text_color_subtitle">Färg på undertextens text.</string>
+    <string name="player_error_web_headers_unsupported">Den här källan är inte kompatibel med enhetens spelare eftersom den kräver särskilda begäranshuvuden. Prova en annan källa eller kontakta tilläggets leverantör.</string>
 </resources>

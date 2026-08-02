@@ -1595,6 +1595,9 @@
     <string name="layout_selection_subtitle">Ana sayfa düzeninizi seçin</string>
     <string name="layout_selection_continue">Devam Et</string>
     <string name="update_title">Güncelleme</string>
+    <string name="update_installer_required">TV’nizdeki uygulamayı güncellemek için Nuvio WebTV Installer’ı kullanın.</string>
+    <string name="update_release_notes">Yenilikler</string>
+    <string name="update_release_notes_unavailable">Sürüm açıklaması mevcut değil.</string>
     <string name="update_downloading">İndiriliyor</string>
     <string name="update_download">İndir</string>
     <string name="update_downloading_ellipsis">İndiriliyor…</string>
@@ -2370,4 +2373,12 @@
     <string name="unsupported_device_required_platform">Gerekli platform</string>
     <string name="unsupported_device_close">Kapat</string>
     <string name="unsupported_device_unavailable">Kullanılamıyor</string>
+    <string name="subtitle_position">Altyazı Konumu</string>
+    <string name="subtitle_position_subtitle">Altyazıları ekranda yukarı veya aşağı taşıyın.</string>
+    <string name="subtitle_font_size_subtitle">Oynatma sırasında altyazılar için kullanılan metin boyutu.</string>
+    <string name="subtitle_bold_subtitle">Altyazı metnini kalın göster.</string>
+    <string name="subtitle_outline_subtitle">Okunabilirlik için altyazı metninin etrafına dış çizgi çiz.</string>
+    <string name="subtitle_outline_color_subtitle">Altyazı dış çizgisinin rengi.</string>
+    <string name="subtitle_text_color_subtitle">Altyazı metninin rengi.</string>
+    <string name="player_error_web_headers_unsupported">Bu kaynak, özel istek başlıkları gerektirdiği için bu cihazın oynatıcısıyla uyumlu değil. Başka bir kaynak deneyin veya eklenti sağlayıcısıyla iletişime geçin.</string>
 </resources>

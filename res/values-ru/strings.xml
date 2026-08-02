@@ -1129,6 +1129,9 @@
     <string name="layout_selection_subtitle">Выберите макет вашего главного экрана</string>
     <string name="layout_selection_continue">Продолжить</string>
     <string name="update_title">Обновление приложения</string>
+    <string name="update_installer_required">Используйте Nuvio WebTV Installer, чтобы обновить приложение на телевизоре.</string>
+    <string name="update_release_notes">Что нового</string>
+    <string name="update_release_notes_unavailable">Описание выпуска недоступно.</string>
     <string name="update_downloading">Скачивание обновления</string>
     <string name="update_download">Скачать</string>
     <string name="update_downloading_ellipsis">Скачивание…</string>
@@ -2364,4 +2367,12 @@
     <string name="unsupported_device_required_platform">Требуемая платформа</string>
     <string name="unsupported_device_close">Закрыть</string>
     <string name="unsupported_device_unavailable">Недоступно</string>
+    <string name="subtitle_position">Положение субтитров</string>
+    <string name="subtitle_position_subtitle">Перемещение субтитров вверх или вниз по экрану.</string>
+    <string name="subtitle_font_size_subtitle">Размер текста, используемый для субтитров во время воспроизведения.</string>
+    <string name="subtitle_bold_subtitle">Показывать текст субтитров жирным шрифтом.</string>
+    <string name="subtitle_outline_subtitle">Рисовать обводку вокруг текста субтитров для лучшей читаемости.</string>
+    <string name="subtitle_outline_color_subtitle">Цвет обводки субтитров.</string>
+    <string name="subtitle_text_color_subtitle">Цвет текста субтитров.</string>
+    <string name="player_error_web_headers_unsupported">Этот источник несовместим с плеером данного устройства, так как требует специальных заголовков запроса. Попробуйте другой источник или обратитесь к разработчику дополнения.</string>
 </resources>

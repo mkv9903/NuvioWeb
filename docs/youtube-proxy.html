@@ -324,6 +324,11 @@
               widget_referrer: widgetReferrer
             },
             events: {
+              onApiChange: function onApiChange() {
+                if (!captionsEnabled) {
+                  setCaptionsEnabled(false);
+                }
+              },
               onReady: function onReady(event) {
                 ready = true;
                 if (readyWatchdog) {
@@ -344,6 +349,9 @@
                 pushState(true);
               },
               onStateChange: function onStateChange(event) {
+                if (!captionsEnabled) {
+                  setCaptionsEnabled(false);
+                }
                 if (Number(event.data) === 0 && loop) {
                   event.target.seekTo(0, true);
                   event.target.playVideo();

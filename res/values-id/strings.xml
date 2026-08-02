@@ -1638,6 +1638,9 @@
     <string name="layout_selection_subtitle">Pilih tata letak layar beranda Anda</string>
     <string name="layout_selection_continue">Lanjutkan</string>
     <string name="update_title">Pembaruan Aplikasi</string>
+    <string name="update_installer_required">Gunakan Nuvio WebTV Installer untuk memperbarui aplikasi di TV Anda.</string>
+    <string name="update_release_notes">Yang baru</string>
+    <string name="update_release_notes_unavailable">Deskripsi rilis tidak tersedia.</string>
     <string name="update_downloading">Mengunduh pembaruan</string>
     <string name="update_download">Unduh</string>
     <string name="update_downloading_ellipsis">Mengunduh…</string>
@@ -2266,4 +2269,12 @@
     <string name="unsupported_device_required_platform">Platform yang diperlukan</string>
     <string name="unsupported_device_close">Tutup</string>
     <string name="unsupported_device_unavailable">Tidak tersedia</string>
+    <string name="subtitle_position">Posisi Subtitle</string>
+    <string name="subtitle_position_subtitle">Pindahkan subtitle ke atas atau ke bawah di layar.</string>
+    <string name="subtitle_font_size_subtitle">Ukuran teks yang digunakan untuk subtitle saat pemutaran.</string>
+    <string name="subtitle_bold_subtitle">Tampilkan teks subtitle dalam huruf tebal.</string>
+    <string name="subtitle_outline_subtitle">Gambar garis tepi di sekeliling teks subtitle agar lebih mudah dibaca.</string>
+    <string name="subtitle_outline_color_subtitle">Warna garis tepi subtitle.</string>
+    <string name="subtitle_text_color_subtitle">Warna teks subtitle.</string>
+    <string name="player_error_web_headers_unsupported">Sumber ini tidak kompatibel dengan pemutar perangkat ini karena memerlukan header permintaan khusus. Coba sumber lain atau hubungi penyedia add-on.</string>
 </resources>

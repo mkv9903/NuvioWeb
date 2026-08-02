@@ -1469,6 +1469,9 @@
     <string name="layout_selection_subtitle">Wählen Sie Ihr Startbildschirm-Layout aus</string>
     <string name="layout_selection_continue">Weiter</string>
     <string name="update_title">App-Aktualisierung</string>
+    <string name="update_installer_required">Verwende den Nuvio WebTV Installer, um die App auf deinem Fernseher zu aktualisieren.</string>
+    <string name="update_release_notes">Neuigkeiten</string>
+    <string name="update_release_notes_unavailable">Keine Versionsbeschreibung verfügbar.</string>
     <string name="update_downloading">Update wird heruntergeladen</string>
     <string name="update_download">Herunterladen</string>
     <string name="update_downloading_ellipsis">Herunterladen…</string>
@@ -2096,4 +2099,12 @@
     <string name="unsupported_device_required_platform">Erforderliche Plattform</string>
     <string name="unsupported_device_close">Schließen</string>
     <string name="unsupported_device_unavailable">Nicht verfügbar</string>
+    <string name="subtitle_position">Untertitelposition</string>
+    <string name="subtitle_position_subtitle">Untertitel auf dem Bildschirm nach oben oder unten verschieben.</string>
+    <string name="subtitle_font_size_subtitle">Textgröße, die während der Wiedergabe für Untertitel verwendet wird.</string>
+    <string name="subtitle_bold_subtitle">Untertiteltext fett anzeigen.</string>
+    <string name="subtitle_outline_subtitle">Einen Umriss um den Untertiteltext zeichnen, um die Lesbarkeit zu verbessern.</string>
+    <string name="subtitle_outline_color_subtitle">Farbe des Untertitelumrisses.</string>
+    <string name="subtitle_text_color_subtitle">Farbe des Untertiteltextes.</string>
+    <string name="player_error_web_headers_unsupported">Diese Quelle ist mit dem Player dieses Geräts nicht kompatibel, da sie spezielle Anfrage-Header erfordert. Versuchen Sie eine andere Quelle oder wenden Sie sich an den Add-on-Anbieter.</string>
 </resources>

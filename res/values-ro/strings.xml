@@ -698,6 +698,9 @@
     <string name="layout_selection_subtitle">Alege aspectul ecranului de pornire</string>
     <string name="layout_selection_continue">Continuă</string>
     <string name="update_title">Actualizare aplicație</string>
+    <string name="update_installer_required">Folosește Nuvio WebTV Installer pentru a actualiza aplicația pe televizor.</string>
+    <string name="update_release_notes">Noutăți</string>
+    <string name="update_release_notes_unavailable">Descrierea versiunii nu este disponibilă.</string>
     <string name="update_downloading">Se descarcă actualizarea</string>
     <string name="update_unknown_sources">Permite instalarea din surse necunoscute pentru a continua.</string>
     <string name="account_title">Cont</string>
@@ -776,4 +779,20 @@
     <string name="unsupported_device_required_platform">Platformă necesară</string>
     <string name="unsupported_device_close">Închide</string>
     <string name="unsupported_device_unavailable">Indisponibil</string>
+    <string name="still_watching_title">Încă te uiți?</string>
+    <string name="still_watching_continue">Redă</string>
+    <string name="still_watching_exit">Ieși</string>
+    <string name="still_watching_countdown">Oprire în %1$d</string>
+    <string name="still_watching_setting_title">Încă te uiți?</string>
+    <string name="still_watching_setting_sub">Solicită confirmarea după episoade redate automat consecutiv.</string>
+    <string name="still_watching_threshold_title">Prag de episoade</string>
+    <string name="still_watching_threshold_sub">Numărul de episoade redate automat înainte de solicitarea confirmării.</string>
+    <string name="subtitle_position">Poziția subtitrărilor</string>
+    <string name="subtitle_position_subtitle">Mută subtitrările în sus sau în jos pe ecran.</string>
+    <string name="subtitle_font_size_subtitle">Dimensiunea textului folosită pentru subtitrări în timpul redării.</string>
+    <string name="subtitle_bold_subtitle">Afișează textul subtitrărilor cu caractere îngroșate.</string>
+    <string name="subtitle_outline_subtitle">Desenează un contur în jurul textului subtitrărilor pentru lizibilitate.</string>
+    <string name="subtitle_outline_color_subtitle">Culoarea conturului subtitrărilor.</string>
+    <string name="subtitle_text_color_subtitle">Culoarea textului subtitrărilor.</string>
+    <string name="player_error_web_headers_unsupported">Această sursă nu este compatibilă cu playerul acestui dispozitiv deoarece necesită anteturi de cerere speciale. Încearcă altă sursă sau contactează furnizorul add-on-ului.</string>
 </resources>
