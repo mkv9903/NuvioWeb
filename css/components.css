@@ -18973,8 +18973,22 @@ html.legacy-webos .debug-console-log-frame {
   height: 100%;
 }
 
+.legacy-webos .stream-route-backdrop,
+.legacy-webos .stream-route-backdrop-dim,
+.legacy-webos .stream-route-left-gradient,
+.legacy-webos .stream-route-right-gradient {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
 .legacy-webos .stream-route-backdrop {
   transform: none !important;
+}
+
+.legacy-webos .stream-route-backdrop-dim {
+  background: rgba(13, 13, 13, 0.75) !important;
 }
 
 .legacy-webos .stream-route-panel-shell {
@@ -19142,10 +19156,10 @@ html.legacy-webos .debug-console-log-frame {
 }
 
 .legacy-webos .stream-route-stream-badge {
-  min-height: 26px;
-  padding: 0 8px;
+  min-height: 28px;
+  padding: 0 10px;
   border-radius: 6px;
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .legacy-webos .stream-route-stream-badge.image {
@@ -19160,10 +19174,10 @@ html.legacy-webos .debug-console-log-frame {
 
 .legacy-webos .stream-route-card-line {
   margin-top: 3px;
-  font-size: 16px;
-  line-height: 20px;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
+  font-size: 18px;
+  line-height: 24px;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .legacy-webos .stream-route-card-line.secondary {
@@ -21012,7 +21026,7 @@ html.legacy-webos .debug-console-log-frame {
 
 .legacy-tizen .stream-route-backdrop-dim,
 .legacy-webos .stream-route-backdrop-dim {
-  background: rgba(13, 13, 13, 0.24);
+  background: rgba(13, 13, 13, 0.75);
 }
 
 .legacy-tizen .stream-route-left-gradient,
@@ -21043,7 +21057,7 @@ html.legacy-webos .debug-console-log-frame {
 
 .legacy-tizen .stream-route-panel-shell,
 .legacy-webos .stream-route-panel-shell {
-  background: rgba(26, 26, 26, 0.82) !important;
+  background: rgba(26, 26, 26, 0.95) !important;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
