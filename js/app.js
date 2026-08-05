@@ -192,6 +192,97 @@ async function shouldShowProfileSelection() {
   return { show: profiles.length > 1 || activeProfileHasPin, pinStates };
 }
 
+function getWebOsLaunchParams() {
+  const raw = globalThis.PalmSystem?.launchParams || globalThis.webOSSystem?.launchParams;
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+
+  const str = String(raw).trim();
+  if (str.startsWith("{") || str.startsWith("[")) {
+    try {
+      return JSON.parse(str);
+    } catch (e) {}
+  }
+
+  try {
+    const params = {};
+    const searchParams = new URLSearchParams(str);
+    for (const [key, value] of searchParams.entries()) {
+      params[key] = value;
+    }
+    if (Object.keys(params).length > 0) {
+      return params;
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+function processWebOsRemotePlayPayload(params) {
+  if (!params || typeof params !== "object") return false;
+
+  const targetStreamUrl =
+    params.streamUrl ||
+    params.url ||
+    params.stream?.url ||
+    params.stream?.streamUrl ||
+    (params.action === "playStream" && typeof params.stream === "string" ? params.stream : null);
+
+  if (typeof targetStreamUrl === "string" && targetStreamUrl.trim()) {
+    const urlStr = targetStreamUrl.trim();
+    const title =
+      params.playerTitle ||
+      params.title ||
+      params.stream?.title ||
+      params.itemTitle ||
+      "Remote Stream";
+
+    const isMkv =
+      urlStr.toLowerCase().includes(".mkv") ||
+      title.toLowerCase().endsWith(".mkv") ||
+      urlStr.toLowerCase().includes("mkv");
+
+    const streamCandidate = {
+      id: urlStr,
+      url: urlStr,
+      title: title,
+      addonName: "Remote Cast",
+      behaviorHints: {
+        fileName: isMkv ? "video.mkv" : undefined
+      }
+    };
+
+    const playerPayload = {
+      streamUrl: urlStr,
+      playerTitle: title,
+      title: title,
+      playerSubtitle: params.playerSubtitle || params.subtitle || "",
+      playerEpisodeTitle: params.playerEpisodeTitle || params.episodeTitle || "",
+      playerReleaseYear: params.playerReleaseYear || params.year || "",
+      playerBackdropUrl:
+        params.playerBackdropUrl || params.backdropUrl || params.backdrop || params.poster || null,
+      playerLogoUrl: params.playerLogoUrl || params.logo || null,
+      itemType: params.itemType || params.type || "movie",
+      startPosition: Number(params.startPosition || params.resumePositionMs || 0) || 0,
+      subtitles: Array.isArray(params.subtitles) ? params.subtitles : [],
+      streamCandidates: Array.isArray(params.streamCandidates)
+        ? params.streamCandidates
+        : [streamCandidate],
+      preferredStreamId: streamCandidate.url,
+      playbackSourceContext: params.playbackSourceContext || {
+        addonId: "remote-cast",
+        addonName: "Remote Cast",
+        selectedStreamId: streamCandidate.url
+      }
+    };
+
+    console.log("Remote play payload received via webOS launchParams:", playerPayload);
+    void Router.navigate("player", playerPayload);
+    return true;
+  }
+  return false;
+}
+
 async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
   hasSelectedProfileThisSession = true;
   const profiles = await ProfileManager.getProfiles();
@@ -215,7 +306,19 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
     restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
       ? Router.consumeWebOsResumeRoute()
       : null;
-  if (resumeRoute?.route) {
+
+  const rawLaunchParams =
+    globalThis.PalmSystem?.launchParams || globalThis.webOSSystem?.launchParams;
+  let parsedLaunch = null;
+  if (rawLaunchParams) {
+    try {
+      parsedLaunch =
+        typeof rawLaunchParams === "object" ? rawLaunchParams : JSON.parse(rawLaunchParams);
+    } catch (e) {}
+  }
+  if (parsedLaunch && processWebOsRemotePlayPayload(parsedLaunch)) {
+    // Navigated to player via remote play payload
+  } else if (resumeRoute?.route) {
     await Router.navigate(resumeRoute.route, resumeRoute.params || {}, {
       replaceHistory: true,
       skipStackPush: true
@@ -293,14 +396,21 @@ function setupWebOsAppLifecycle() {
     if (recovering || !appShellRendered) {
       return;
     }
-    const current = Router.getCurrent();
-    if (!current) {
-      return;
-    }
     recovering = true;
     try {
       if (document.body) {
         document.body.style.removeProperty("display");
+      }
+
+      const launchParams = getWebOsLaunchParams();
+      if (processWebOsRemotePlayPayload(launchParams)) {
+        activateWebOsApp();
+        return;
+      }
+
+      const current = Router.getCurrent();
+      if (!current) {
+        return;
       }
       if (current === "debugConsole") {
         await Router.navigate(

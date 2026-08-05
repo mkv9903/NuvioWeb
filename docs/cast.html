@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nuvio TV - Web Casting Controller</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-color: #0e0f12;
+        --card-bg: #181a20;
+        --card-border: #282c37;
+        --accent-color: #3b82f6;
+        --accent-hover: #2563eb;
+        --text-color: #f3f4f6;
+        --text-muted: #9ca3af;
+        --success-color: #10b981;
+        --error-color: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        width: 100%;
+        max-width: 520px;
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+
+      .header-logo {
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 20px;
+        color: white;
+      }
+
+      .header-text h1 {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text-color);
+      }
+
+      .header-text p {
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+
+      .form-group {
+        margin-bottom: 18px;
+      }
+
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      input[type="text"],
+      input[type="url"] {
+        width: 100%;
+        background: #0f1115;
+        border: 1px solid var(--card-border);
+        border-radius: 10px;
+        padding: 12px 14px;
+        color: var(--text-color);
+        font-size: 14px;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+
+      input:focus {
+        border-color: var(--accent-color);
+      }
+
+      .btn {
+        width: 100%;
+        background: var(--accent-color);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 14px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background 0.2s,
+          transform 0.1s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .btn:hover {
+        background: var(--accent-hover);
+      }
+
+      .btn:active {
+        transform: scale(0.98);
+      }
+
+      .status-msg {
+        margin-top: 16px;
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        display: none;
+      }
+
+      .status-msg.success {
+        display: block;
+        background: rgba(16, 185, 129, 0.15);
+        color: var(--success-color);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+      }
+
+      .status-msg.error {
+        display: block;
+        background: rgba(239, 68, 68, 0.15);
+        color: var(--error-color);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+
+      .cmd-box {
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid var(--card-border);
+      }
+
+      .cmd-box h3 {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      pre {
+        background: #0f1115;
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        color: #38bdf8;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div class="header-logo">N</div>
+        <div class="header-text">
+          <h1>Nuvio TV Remote Cast</h1>
+          <p>Play video streams on your LG webOS TV</p>
+        </div>
+      </div>
+
+      <form id="castForm">
+        <div class="form-group">
+          <label for="tvIp">TV IP Address (or Hostname)</label>
+          <input type="text" id="tvIp" placeholder="e.g. 192.168.1.50" required />
+        </div>
+
+        <div class="form-group">
+          <label for="streamUrl">Stream / Video URL</label>
+          <input
+            type="url"
+            id="streamUrl"
+            placeholder="https://domain.com/video.m3u8 or .mp4"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="streamTitle">Title (Optional)</label>
+          <input type="text" id="streamTitle" placeholder="e.g. My Favorite Movie" />
+        </div>
+
+        <div class="form-group">
+          <label for="subUrl">Subtitle URL (.vtt / .srt) (Optional)</label>
+          <input type="url" id="subUrl" placeholder="https://domain.com/subtitles.vtt" />
+        </div>
+
+        <div class="form-group">
+          <label for="startPos">Start Position in Seconds (Optional)</label>
+          <input type="text" id="startPos" placeholder="e.g. 120 (starts at 2 minutes)" />
+        </div>
+
+        <button type="submit" class="btn" id="sendBtn">▶ Play on Nuvio TV</button>
+      </form>
+
+      <div id="statusMsg" class="status-msg"></div>
+
+      <div class="cmd-box">
+        <h3>Alternative: webOS CLI Command</h3>
+        <pre id="cliCmd">ares-launch -p '{"streamUrl":"https://..."}' space.nuvio.webos</pre>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById("castForm");
+      const tvIpInput = document.getElementById("tvIp");
+      const streamUrlInput = document.getElementById("streamUrl");
+      const streamTitleInput = document.getElementById("streamTitle");
+      const subUrlInput = document.getElementById("subUrl");
+      const startPosInput = document.getElementById("startPos");
+      const statusMsg = document.getElementById("statusMsg");
+      const cliCmd = document.getElementById("cliCmd");
+
+      // Restore last TV IP from localStorage
+      const savedIp = localStorage.getItem("nuvio_tv_ip");
+      if (savedIp) {
+        tvIpInput.value = savedIp;
+      }
+
+      function updateCliCmd() {
+        const url = streamUrlInput.value.trim() || "https://domain.com/video.m3u8";
+        const title = streamTitleInput.value.trim();
+        const payload = {
+          action: "playStream",
+          streamUrl: url,
+          playerTitle: title || "Remote Stream"
+        };
+        cliCmd.textContent = `ares-launch -p '${JSON.stringify(payload)}' space.nuvio.webos`;
+      }
+
+      streamUrlInput.addEventListener("input", updateCliCmd);
+      streamTitleInput.addEventListener("input", updateCliCmd);
+      updateCliCmd();
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const tvIp = tvIpInput.value.trim();
+        const streamUrl = streamUrlInput.value.trim();
+        const title = streamTitleInput.value.trim();
+        const subUrl = subUrlInput ? subUrlInput.value.trim() : "";
+        const startPos = startPosInput ? Number(startPosInput.value.trim() || 0) : 0;
+
+        if (!tvIp || !streamUrl) return;
+
+        localStorage.setItem("nuvio_tv_ip", tvIp);
+        statusMsg.className = "status-msg";
+        statusMsg.style.display = "block";
+        statusMsg.textContent = "Casting to webOS TV...";
+
+        const launchParams = {
+          action: "playStream",
+          streamUrl: streamUrl,
+          playerTitle: title || "Remote Stream",
+          title: title || "Remote Stream"
+        };
+
+        if (subUrl) {
+          launchParams.subtitles = JSON.stringify([
+            { url: subUrl, lang: "eng", label: "External Subtitle" }
+          ]);
+        }
+
+        if (startPos > 0) {
+          launchParams.startPosition = startPos;
+        }
+
+        // Try DIAL (HTTP POST to dialAppName endpoints - Prompt-Free!)
+        let dialSuccess = false;
+        const dialBody = new URLSearchParams();
+        Object.keys(launchParams).forEach((k) => dialBody.append(k, launchParams[k]));
+
+        const dialEndpoints = [
+          "http://" + tvIp + ":36866/apps/nuvio",
+          "http://" + tvIp + ":36866/apps/space.nuvio.webos",
+          "http://" + tvIp + ":3001/apps/nuvio",
+          "http://" + tvIp + ":3001/apps/space.nuvio.webos",
+          "http://" + tvIp + ":2004/apps/nuvio",
+          "http://" + tvIp + ":2004/apps/space.nuvio.webos",
+          "http://" + tvIp + ":8080/apps/nuvio",
+          "http://" + tvIp + ":8080/apps/space.nuvio.webos",
+          "http://" + tvIp + ":8088/apps/nuvio",
+          "http://" + tvIp + ":8088/apps/space.nuvio.webos"
+        ];
+
+        for (const endpoint of dialEndpoints) {
+          try {
+            statusMsg.textContent = `Trying prompt-free DIAL cast (${endpoint})...`;
+            await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain" },
+              body: dialBody.toString(),
+              mode: "no-cors"
+            });
+            dialSuccess = true;
+            break;
+          } catch (err) {
+            console.log(`DIAL endpoint ${endpoint} failed or blocked, trying next...`);
+          }
+        }
+
+        if (dialSuccess) {
+          statusMsg.className = "status-msg success";
+          statusMsg.textContent = "▶ DIAL Cast request sent! Stream launching on TV...";
+          return;
+        }
+
+        // Fallback to SSAP WebSocket (Port 3000)
+        statusMsg.textContent =
+          "Connecting via SSAP WebSocket... (Check TV screen if prompt appears)";
+        const clientKey = localStorage.getItem("nuvio_tv_client_key_" + tvIp) || "";
+
+        const launchPayload = {
+          id: "space.nuvio.webos",
+          params: launchParams
+        };
+
+        try {
+          const ws = new WebSocket(`ws://${tvIp}:3000`);
+
+          const timeout = setTimeout(() => {
+            ws.close();
+            statusMsg.className = "status-msg error";
+            statusMsg.textContent =
+              "Connection timeout. Ensure TV is powered on, connected to Wi-Fi, and IP is correct.";
+          }, 15000);
+
+          ws.onopen = () => {
+            const registerReq = {
+              type: "register",
+              id: "register_0",
+              payload: {
+                forcePairing: false,
+                pairingType: "PROMPT",
+                "client-key": clientKey,
+                manifest: {
+                  permissions: [
+                    "LAUNCH",
+                    "LAUNCH_WEBAPP",
+                    "APP_TO_APP",
+                    "CONTROL_AUDIO",
+                    "CONTROL_POWER"
+                  ]
+                }
+              }
+            };
+            ws.send(JSON.stringify(registerReq));
+          };
+
+          ws.onmessage = (event) => {
+            try {
+              const msg = JSON.parse(event.data);
+
+              if (msg.type === "registered") {
+                if (msg.payload && msg.payload["client-key"]) {
+                  localStorage.setItem("nuvio_tv_client_key_" + tvIp, msg.payload["client-key"]);
+                }
+                statusMsg.textContent = "Paired! Launching Nuvio TV stream...";
+                const launchReq = {
+                  id: "launch_request_1",
+                  type: "request",
+                  uri: "ssap://system.launcher/launch",
+                  payload: launchPayload
+                };
+                ws.send(JSON.stringify(launchReq));
+              } else if (msg.id === "launch_request_1") {
+                clearTimeout(timeout);
+                if (msg.type === "response" || msg.payload?.returnValue !== false) {
+                  statusMsg.className = "status-msg success";
+                  statusMsg.textContent = "▶ Playback request sent successfully to Nuvio TV!";
+                } else {
+                  statusMsg.className = "status-msg error";
+                  statusMsg.textContent =
+                    "Launch error: " + (msg.error || JSON.stringify(msg.payload));
+                }
+                setTimeout(() => ws.close(), 1000);
+              } else if (msg.type === "error" && msg.id === "register_0") {
+                clearTimeout(timeout);
+                statusMsg.className = "status-msg error";
+                statusMsg.textContent = "Pairing error: " + (msg.error || "Access denied on TV.");
+              }
+            } catch (e) {
+              console.warn("Error parsing websocket response", e);
+            }
+          };
+
+          ws.onerror = (err) => {
+            clearTimeout(timeout);
+            statusMsg.className = "status-msg error";
+            statusMsg.textContent =
+              "Could not connect via WebSocket. Try using the ares-launch CLI command below.";
+          };
+        } catch (err) {
+          statusMsg.className = "status-msg error";
+          statusMsg.textContent = "Error: " + err.message;
+        }
+      });
+    </script>
+  </body>
+</html>

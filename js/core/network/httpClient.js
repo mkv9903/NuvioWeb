@@ -20,40 +20,44 @@ function hasHeader(headers, name) {
 
 // Save the original browser fetch before any overrides, at module scope.
 // This lets proxyFetch call the real fetch directly without hitting the interceptor.
-const _originalFetch = typeof window !== 'undefined' ? window.fetch.bind(window) : fetch;
+const _originalFetch = typeof window !== "undefined" ? window.fetch.bind(window) : fetch;
 
 export async function proxyFetch(url, fetchInit) {
-  const cloudProxyUrl = typeof window !== 'undefined' ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL : null;
-  
+  const cloudProxyUrl =
+    typeof window !== "undefined" ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL : null;
+
   if (cloudProxyUrl && Platform.isWebOS()) {
     const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(url)}`;
-    const proxyToken = typeof window !== 'undefined' ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN : null;
+    const proxyToken =
+      typeof window !== "undefined" ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN : null;
     const modifiedInit = { ...fetchInit };
     if (proxyToken) {
-      modifiedInit.headers = { ...(modifiedInit.headers || {}), 'x-proxy-token': proxyToken };
+      modifiedInit.headers = { ...(modifiedInit.headers || {}), "x-proxy-token": proxyToken };
     }
     return await _originalFetch(targetUrl, modifiedInit);
   } else {
-    return (await fetchViaWebOsSupabaseProxy(url, fetchInit)) || (await _originalFetch(url, fetchInit));
+    return (
+      (await fetchViaWebOsSupabaseProxy(url, fetchInit)) || (await _originalFetch(url, fetchInit))
+    );
   }
 }
 
 // Global fetch interceptor for webOS to ensure ALL external API requests pass through proxy.
 // IMPORTANT: Only intercepts absolute external http(s):// URLs.
 // Skips: relative paths, same-origin assets, data:/blob: URLs, video streams, local network.
-if (typeof window !== 'undefined') {
-  window.fetch = async function(url, options) {
+if (typeof window !== "undefined") {
+  window.fetch = async function (url, options) {
     const cloudProxyUrl = window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_URL;
-    
+
     if (cloudProxyUrl && Platform.isWebOS()) {
       const urlStr = String(url || "");
-      
+
       // Only proxy absolute http(s) URLs — never relative paths, data:, blob:, etc.
       const isAbsoluteHttp = /^https?:\/\//i.test(urlStr);
       if (!isAbsoluteHttp) {
         return _originalFetch(url, options);
       }
-      
+
       // Never proxy same-origin requests (the app's own bundled assets)
       try {
         if (new URL(urlStr).origin === window.location.origin) {
@@ -63,12 +67,12 @@ if (typeof window !== 'undefined') {
         // If URL parsing fails, don't proxy
         return _originalFetch(url, options);
       }
-      
+
       // Never proxy requests already going to the proxy (prevent infinite loop)
       if (urlStr.startsWith(cloudProxyUrl)) {
         return _originalFetch(url, options);
       }
-      
+
       // Never proxy video streams or local network
       let urlPath = "";
       try {
@@ -76,25 +80,29 @@ if (typeof window !== 'undefined') {
       } catch (e) {
         urlPath = "";
       }
-      
-      const isExcluded = urlPath.endsWith(".m3u8") || 
-                         urlPath.endsWith(".mp4") || 
-                         urlPath.endsWith(".mkv") || 
-                         urlPath.endsWith(".ts") || 
-                         urlStr.includes("127.0.0.1") || 
-                         urlStr.includes("localhost") ||
-                         urlStr.match(/^https?:\/\/(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[0-1]))\./);
-                         
+
+      const isExcluded =
+        urlPath.endsWith(".m3u8") ||
+        urlPath.endsWith(".mp4") ||
+        urlPath.endsWith(".mkv") ||
+        urlPath.endsWith(".ts") ||
+        urlStr.includes("127.0.0.1") ||
+        urlStr.includes("localhost") ||
+        urlStr.match(/^https?:\/\/(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[0-1]))\./);
+
       if (isExcluded) {
         return _originalFetch(url, options);
       }
-      
+
       // Route through Cloudflare proxy
       const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(urlStr)}`;
       const proxyToken = window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN;
       const modifiedOptions = { ...(options || {}) };
       if (proxyToken) {
-        modifiedOptions.headers = { ...(modifiedOptions.headers || {}), 'x-proxy-token': proxyToken };
+        modifiedOptions.headers = {
+          ...(modifiedOptions.headers || {}),
+          "x-proxy-token": proxyToken
+        };
       }
       return await _originalFetch(targetUrl, modifiedOptions);
     }
