@@ -418,21 +418,25 @@ function gridToFlexFallbackPlugin() {
     postcssPlugin: "grid-to-flex-fallback",
     Declaration(decl) {
       if (decl.prop !== "display" || decl.value !== "grid") return;
-      
+
       const rule = decl.parent;
-      if (!rule || rule.type !== 'rule') return;
-      
+      if (!rule || rule.type !== "rule") return;
+
       let tCols = null;
       let tRows = null;
-      rule.walkDecls("grid-template-columns", d => { tCols = d.value.trim(); });
-      rule.walkDecls("grid-template-rows", d => { tRows = d.value.trim(); });
-      
+      rule.walkDecls("grid-template-columns", (d) => {
+        tCols = d.value.trim();
+      });
+      rule.walkDecls("grid-template-rows", (d) => {
+        tRows = d.value.trim();
+      });
+
       if (!tCols || tCols.includes("auto-fill") || tCols.includes("auto-fit")) return;
-      
-      const scopedSelectors = rule.selectors.map(s => `html.no-css-grid ${s}`);
+
+      const scopedSelectors = rule.selectors.map((s) => `html.no-css-grid ${s}`);
       const flexFallback = postcss.rule({ selectors: scopedSelectors });
       flexFallback.append({ prop: "display", value: "flex" });
-      
+
       // Parse columns
       let cols = [];
       if (tCols.startsWith("repeat(")) {
@@ -458,37 +462,38 @@ function gridToFlexFallbackPlugin() {
         }
         if (current) cols.push(current);
       }
-      
+
       if (cols.length === 0) return;
-      
-      if (cols.length > 0 && cols.every(c => c === cols[0])) {
+
+      if (cols.length > 0 && cols.every((c) => c === cols[0])) {
         // Equal columns or single column
         if (cols.length > 1) {
-            flexFallback.append({ prop: "flex-wrap", value: "wrap" });
-            const childRule = postcss.rule({ selectors: scopedSelectors.map(s => `${s} > *`) });
-            childRule.append({ prop: "width", value: `calc(100% / ${cols.length})` });
-            childRule.append({ prop: "box-sizing", value: "border-box" });
-            rule.after(flexFallback);
-            flexFallback.after(childRule);
-            return;
+          flexFallback.append({ prop: "flex-wrap", value: "wrap" });
+          const childRule = postcss.rule({ selectors: scopedSelectors.map((s) => `${s} > *`) });
+          childRule.append({ prop: "width", value: `calc(100% / ${cols.length})` });
+          childRule.append({ prop: "box-sizing", value: "border-box" });
+          rule.after(flexFallback);
+          flexFallback.after(childRule);
+          return;
         }
       }
-      
+
       // 2D grid handling for player-dialog-item
       if (tRows) {
         flexFallback.append({ prop: "flex-wrap", value: "wrap" });
         rule.after(flexFallback);
         return;
       }
-      
+
       // Mixed columns (e.g. Apx 1fr, 1fr auto, Afr Bfr)
       rule.after(flexFallback);
       // We append in reverse order so that after() puts them in the correct sequential order
       for (let i = cols.length - 1; i >= 0; i--) {
         const col = cols[i];
-        const nth = i === 0 ? "first-child" : (i === cols.length - 1 ? "last-child" : `nth-child(${i + 1})`);
-        const childRule = postcss.rule({ selectors: scopedSelectors.map(s => `${s} > :${nth}`) });
-        
+        const nth =
+          i === 0 ? "first-child" : i === cols.length - 1 ? "last-child" : `nth-child(${i + 1})`;
+        const childRule = postcss.rule({ selectors: scopedSelectors.map((s) => `${s} > :${nth}`) });
+
         if (col.includes("1fr") || col.includes("minmax(0, 1fr)")) {
           childRule.append({ prop: "flex", value: "1" });
           childRule.append({ prop: "min-width", value: "0" });

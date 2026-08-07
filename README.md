@@ -2,11 +2,11 @@
 
   <img src="assets/brand/app_logo_wordmark.png" alt="NuvioTV Web" width="300" />
   <br />
-  
-> **Note:** This is a fork of the main repository ([NuvioMedia/NuvioWeb](https://github.com/NuvioMedia/NuvioWeb)). 
-> It has been specifically modified to support and improve compatibility with **LG WebOS 4.x**. 
+
+> **Note:** This is a fork of the main repository ([NuvioMedia/NuvioWeb](https://github.com/NuvioMedia/NuvioWeb)).
+> It has been specifically modified to support and improve compatibility with **LG WebOS 4.x**.
 > It also includes support for a custom Cloudflare proxy (`WEBOS_CLOUD_PROXY_URL`) to handle cross-origin network requests and bypass network limitations on older WebOS versions.
-> 
+>
 > These modifications were made with the assistance of AI.
 
   <br />
@@ -27,20 +27,23 @@
 
 ## WebOS Custom Proxy Setup
 
-To bypass network restrictions and CORS issues on LG WebOS 4.x, this fork supports routing external API requests through a custom Cloudflare Worker proxy. 
+To bypass network restrictions and CORS issues on LG WebOS 4.x, this fork supports routing external API requests through a custom Cloudflare Worker proxy.
 
 ### 1. Set Up the Cloudflare Worker
+
 Create a new Cloudflare Worker and paste the contents of [`cloudflare-worker/worker.js`](cloudflare-worker/worker.js) from this repository into your worker. This script handles CORS preflight requests and enforces a secret token to prevent abuse of your proxy.
 
 Remember to replace the `EXPECTED_TOKEN` inside the worker script with your own secret string before deploying it!
 
-
 ### 2. Configure Your App Environment
+
 Update your `local.properties` (or GitHub Secrets) with the worker URL and your chosen token:
+
 ```properties
 WEBOS_CLOUD_PROXY_URL=https://your-worker.your-domain.workers.dev/
 WEBOS_CLOUD_PROXY_TOKEN=YOUR_SUPER_SECRET_TOKEN
 ```
+
 ## About
 
 NuvioTV Web is the web codebase for the Nuvio TV experience on Smart TVs.
