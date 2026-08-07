@@ -543,8 +543,18 @@ export const CatalogSeeAllScreen = {
           this.preserveViewportOnNextRender = true;
           this.render();
         },
-        onChanged: () => {
-          void this.refreshWatchedTitleIds().then(() => this.render());
+        onChanged: (state) => {
+          const itemId = String(state?.item?.id || "").trim();
+          if (!itemId) {
+            return;
+          }
+          const watchedTitleIds = new Set(this.watchedTitleIds || []);
+          if (state.isWatched) {
+            watchedTitleIds.add(itemId);
+          } else {
+            watchedTitleIds.delete(itemId);
+          }
+          this.watchedTitleIds = watchedTitleIds;
         }
       });
     }

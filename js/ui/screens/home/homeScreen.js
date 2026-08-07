@@ -130,6 +130,10 @@ export { escapeAttribute, escapeHtml, formatCatalogRowTitle } from "./homeUtils.
 
 const MODERN_SIDEBAR_PILL_AUTO_COLLAPSE_MS = 4000;
 const CW_RELEASE_ALERT_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const HOME_LAZY_IMAGE_SELECTOR =
+  ".home-main .content-poster[data-src], .home-main .home-poster-landscape-logo[data-src], .home-main .home-continue-bg[data-src]";
+const HOME_LAZY_IMAGE_ROW_SELECTOR =
+  ".home-row, .home-modern-row, .home-grid-section, .home-row-continue";
 
 function homePerfNow() {
   return typeof performance !== "undefined" && typeof performance.now === "function"
@@ -458,6 +462,11 @@ function preloadImageSource(src) {
     }
   });
   return preload;
+}
+
+function preloadModernHeroAssets(hero) {
+  const display = buildModernHeroPresentation(hero);
+  return Promise.all([preloadImageSource(display?.backdrop), preloadImageSource(display?.logo)]);
 }
 
 function animateModernHeroBackdropSwap(backdrop, nextSrc, nextAlt = "") {
@@ -2246,9 +2255,12 @@ export function renderContinueWatchingSection(items = [], options = {}) {
     rowKey
   };
   const itemLimit = Math.max(1, Number(options?.itemLimit || items.length || 1));
+  const cardStyle = ["card", "wide", "poster"].includes(String(options?.cardStyle || "card"))
+    ? String(options.cardStyle)
+    : "card";
   const renderedItems = getContinueWatchingRenderItems(items, itemLimit);
   return `
-    <section class="home-row home-row-continue"${rowKey ? ` data-row-key="${escapeAttribute(rowKey)}"` : ""}>
+    <section class="home-row home-row-continue home-row-continue-${cardStyle}"${rowKey ? ` data-row-key="${escapeAttribute(rowKey)}"` : ""}>
       <div class="home-row-head">
         <h2 class="home-row-title">${escapeHtml(t("home.continueWatching", {}, "Continue Watching"))}</h2>
       </div>
@@ -3817,6 +3829,9 @@ export const HomeScreen = {
       clearTimeout(this.deferredContinueWatchingFocusTimer);
       this.deferredContinueWatchingFocusTimer = null;
     }
+    this.container
+      ?.querySelector(".home-modern-hero-card")
+      ?.classList.remove("is-hero-focus-pending");
     this.heroFocusToken = Number(this.heroFocusToken || 0) + 1;
   },
 
@@ -3871,6 +3886,7 @@ export const HomeScreen = {
     heroNode.dataset.itemType = hero?.type || "movie";
     heroNode.dataset.itemTitle = hero?.name || "Untitled";
     heroNode.classList.toggle("is-hero-meta-enriching", Boolean(hero?.heroMetaEnriching));
+    heroNode.classList.remove("is-hero-focus-pending");
 
     const backdrop = heroNode.querySelector(".home-hero-backdrop");
     if (backdrop) {
@@ -4249,13 +4265,16 @@ export const HomeScreen = {
     if (!item?.id) {
       return [];
     }
-    const isTraktLibrary = this.posterHoldMenu?.librarySourceMode === LibrarySourceMode.TRAKT;
+    const librarySourceMode = this.posterHoldMenu?.librarySourceMode;
+    const isRemoteLibrary = librarySourceMode !== LibrarySourceMode.LOCAL;
     const options = [
       { action: "details", label: t("cw_action_go_to_details", {}, "Go to details") },
       {
-        action: isTraktLibrary ? "manageLists" : "toggleLibrary",
-        label: isTraktLibrary
-          ? t("library_manage_lists", {}, "Manage Lists")
+        action: isRemoteLibrary ? "manageLists" : "toggleLibrary",
+        label: isRemoteLibrary
+          ? librarySourceMode === LibrarySourceMode.SIMKL
+            ? "Manage Simkl Status"
+            : t("library_manage_lists", {}, "Manage Lists")
           : this.posterHoldMenu?.isSaved
             ? t("hero_remove_from_library", {}, "Remove from library")
             : t("hero_add_to_library", {}, "Add to library")
@@ -4545,8 +4564,12 @@ export const HomeScreen = {
         className: "poster-list-picker-list-button"
       })),
       {
-        action: "saveLibraryLists",
-        label: t("action_save", {}, "Save"),
+        action: this.posterListPicker.destructiveRemovalRequired
+          ? "confirmDestructiveSimklRemoval"
+          : "saveLibraryLists",
+        label: this.posterListPicker.destructiveRemovalRequired
+          ? "Remove status and clear Simkl history"
+          : t("action_save", {}, "Save"),
         className: "poster-list-picker-save-button"
       }
     ];
@@ -4593,7 +4616,7 @@ export const HomeScreen = {
     const tabs = await libraryRepository.getListTabs().catch(() => []);
     const resolvedTabs =
       Array.isArray(tabs) && tabs.length
-        ? tabs
+        ? tabs.filter((tab) => tab.isMembershipDestination !== false)
         : [{ key: "local", title: t("detail.library", {}, "Library"), type: "local" }];
     const libraryItem = {
       itemId: item.id,
@@ -4620,6 +4643,7 @@ export const HomeScreen = {
     this.posterHoldMenu = null;
     this.posterListPicker = {
       item: libraryItem,
+      sourceMode: await libraryRepository.getSourceMode().catch(() => LibrarySourceMode.LOCAL),
       tabs: resolvedTabs,
       membership: Object.fromEntries(
         resolvedTabs.map((tab) => [tab.key, Boolean(snapshot?.listMembership?.[tab.key])])
@@ -4636,20 +4660,34 @@ export const HomeScreen = {
     const normalizedAction = String(action || "");
     if (normalizedAction.startsWith("toggleLibraryList:")) {
       const key = normalizedAction.slice("toggleLibraryList:".length);
-      this.posterListPicker.membership = {
-        ...(this.posterListPicker.membership || {}),
-        [key]: !this.posterListPicker.membership?.[key]
-      };
-      this._homeHoldDialog?.setButtonSelected?.(
-        normalizedAction,
-        Boolean(this.posterListPicker.membership[key])
-      );
+      const nextSelected = !this.posterListPicker.membership?.[key];
+      this.posterListPicker.membership =
+        this.posterListPicker.sourceMode === LibrarySourceMode.SIMKL
+          ? Object.fromEntries(
+              this.posterListPicker.tabs.map((tab) => [tab.key, nextSelected && tab.key === key])
+            )
+          : { ...(this.posterListPicker.membership || {}), [key]: nextSelected };
+      this.posterListPicker.destructiveRemovalRequired = false;
+      if (this.posterListPicker.sourceMode === LibrarySourceMode.SIMKL) {
+        this.mountPosterListPickerDialog();
+      } else {
+        this._homeHoldDialog?.setButtonSelected?.(
+          normalizedAction,
+          Boolean(this.posterListPicker.membership[key])
+        );
+      }
       return true;
     }
-    if (normalizedAction === "saveLibraryLists") {
+    if (
+      normalizedAction === "saveLibraryLists" ||
+      normalizedAction === "confirmDestructiveSimklRemoval"
+    ) {
       try {
         await libraryRepository.applyMembershipChanges(this.posterListPicker.item, {
           desiredMembership: this.posterListPicker.membership || {}
+        }, {
+          destructiveRemovalConfirmed:
+            normalizedAction === "confirmDestructiveSimklRemoval"
         });
         this.posterListPicker = null;
         this.destroyHomeHoldDialog();
@@ -4657,11 +4695,11 @@ export const HomeScreen = {
         this.holdMenuScrollState = null;
       } catch (error) {
         console.warn("Failed to update library lists", error);
-        this.posterListPicker.error = t(
-          "detail_lists_save_failed",
-          {},
-          "Could not save list changes."
-        );
+        this.posterListPicker.destructiveRemovalRequired =
+          error?.code === "SIMKL_DESTRUCTIVE_REMOVAL_REQUIRED";
+        this.posterListPicker.error = this.posterListPicker.destructiveRemovalRequired
+          ? "Removing this status will also clear watched history or a rating on Simkl. Confirm only if that is intended."
+          : t("detail_lists_save_failed", {}, "Could not save list changes.");
         this.mountPosterListPickerDialog();
       }
       return true;
@@ -5321,6 +5359,9 @@ export const HomeScreen = {
       !this.heroItem?.heroMetaEnriching &&
       !shouldEnrichModernHero(hero)
     ) {
+      this.container
+        ?.querySelector(".home-modern-hero-card")
+        ?.classList.remove("is-hero-focus-pending");
       this.syncCollectionHeroMedia(hero);
       return;
     }
@@ -5334,6 +5375,11 @@ export const HomeScreen = {
       previous > 0 && now - previous < MODERN_HOME_CONSTANTS.heroRapidNavThresholdMs;
     const delay = this.getHeroFocusDelay({ rapid: isRapidNav });
     this.lastModernHeroNavAt = now;
+    if (isRapidNav) {
+      this.container
+        ?.querySelector(".home-modern-hero-card")
+        ?.classList.add("is-hero-focus-pending");
+    }
     const preloadDelay = Math.max(0, Math.min(120, delay - 80));
     this.heroBackdropPreloadTimer = setTimeout(() => {
       this.heroBackdropPreloadTimer = null;
@@ -5348,8 +5394,7 @@ export const HomeScreen = {
       if (buildHeroIdentity(focusedHero) !== scheduledHeroIdentity) {
         return;
       }
-      const backdropSource = buildModernHeroPresentation(focusedHero)?.backdrop || "";
-      void preloadImageSource(backdropSource);
+      void preloadModernHeroAssets(focusedHero);
     }, preloadDelay);
     this.heroFocusDelayTimer = setTimeout(() => {
       if (Number(this.heroFocusToken || 0) !== focusToken) {
@@ -5367,7 +5412,7 @@ export const HomeScreen = {
       if (buildHeroIdentity(currentHero) !== scheduledHeroIdentity) {
         return;
       }
-      requestAnimationFrame(() => {
+      requestAnimationFrame(async () => {
         if (Number(this.heroFocusToken || 0) !== focusToken) {
           return;
         }
@@ -5383,9 +5428,25 @@ export const HomeScreen = {
           void this.enrichCurrentHeroAsync(latestHero, focusToken, { deferCommit: true });
           return;
         }
-        this.heroItem = latestHero;
+        await preloadModernHeroAssets(latestHero);
+        if (Number(this.heroFocusToken || 0) !== focusToken) {
+          return;
+        }
+        const settledFocusedNode = this.getCurrentFocusedNode();
+        if (
+          settledFocusedNode !== node ||
+          !node?.isConnected ||
+          !node.classList.contains("focused")
+        ) {
+          return;
+        }
+        const settledHero = this.getNodeHeroSource(node);
+        if (!settledHero || buildHeroIdentity(settledHero) !== scheduledHeroIdentity) {
+          return;
+        }
+        this.heroItem = settledHero;
         const matchedIndex = this.heroCandidates.findIndex(
-          (item) => String(item?.id || "") === String(latestHero.id || "")
+          (item) => String(item?.id || "") === String(settledHero.id || "")
         );
         if (matchedIndex >= 0) {
           this.heroIndex = matchedIndex;
@@ -7940,6 +8001,11 @@ export const HomeScreen = {
     if (canResumePreservedTizenHome) {
       this.homeDomPreserved = false;
       this.container.classList.remove("home-dom-preserved");
+      this.container.style.removeProperty("position");
+      this.container.style.removeProperty("top");
+      this.container.style.removeProperty("right");
+      this.container.style.removeProperty("bottom");
+      this.container.style.removeProperty("left");
       this.container.style.removeProperty("visibility");
       this.container.style.removeProperty("pointer-events");
       setModernSidebarPillIconOnly(this.container, this.pillIconOnly);
@@ -8127,17 +8193,45 @@ export const HomeScreen = {
         });
     });
 
+    // Installed-addon state can contain the same manifest catalog more than
+    // once. Collapse only descriptors that would issue the exact same request;
+    // addons that reuse ids on different base URLs must retain the existing
+    // last-row-wins behavior.
+    const seenCatalogDescriptors = new Set();
+    const uniqueCatalogDescriptors = catalogDescriptors.filter((descriptor) => {
+      const descriptorKey = JSON.stringify([
+        descriptor?.addonBaseUrl || "",
+        descriptor?.addonId || "",
+        descriptor?.addonName || "",
+        descriptor?.catalogId || "",
+        descriptor?.catalogName || "",
+        descriptor?.type || ""
+      ]);
+      if (seenCatalogDescriptors.has(descriptorKey)) {
+        return false;
+      }
+      seenCatalogDescriptors.add(descriptorKey);
+      return true;
+    });
+    if (HOME_PERF_DEBUG) {
+      logHomePerf("catalogDescriptors", {
+        requested: catalogDescriptors.length,
+        unique: uniqueCatalogDescriptors.length,
+        duplicates: catalogDescriptors.length - uniqueCatalogDescriptors.length
+      });
+    }
+
     // Seed missing order keys from manifest order before progressive requests
     // can add rows in network-completion order.
     HomeCatalogStore.ensureOrderKeys(
-      catalogDescriptors.map((catalog) =>
+      uniqueCatalogDescriptors.map((catalog) =>
         buildCatalogOrderKey(catalog.addonId, catalog.type, catalog.catalogId)
       )
     );
 
     const initialCatalogLoad = this.getInitialCatalogLoadCount();
-    const initialDescriptors = catalogDescriptors.slice(0, initialCatalogLoad);
-    const deferredDescriptors = catalogDescriptors.slice(initialCatalogLoad);
+    const initialDescriptors = uniqueCatalogDescriptors.slice(0, initialCatalogLoad);
+    const deferredDescriptors = uniqueCatalogDescriptors.slice(initialCatalogLoad);
 
     const progressiveInitialRows = new Map();
     const initialRows = await this.fetchCatalogRows(initialDescriptors, {
@@ -8496,19 +8590,6 @@ export const HomeScreen = {
     const onRow = typeof options?.onRow === "function" ? options.onRow : null;
     const fetchedRows = [];
     const normalizedDescriptors = Array.isArray(descriptors) ? descriptors : [];
-    if (HOME_PERF_DEBUG) {
-      const descriptorKeys = normalizedDescriptors.map((descriptor) =>
-        buildModernRowKey(descriptor)
-      );
-      const uniqueDescriptorCount = new Set(descriptorKeys).size;
-      logHomePerf("fetchCatalogRows", {
-        requested: Number(normalizedDescriptors.length || 0),
-        unique: uniqueDescriptorCount,
-        duplicates: Number(normalizedDescriptors.length || 0) - uniqueDescriptorCount,
-        batchSize: Number(batchSize || 0),
-        allowLoading
-      });
-    }
 
     const fetchBatch = async (batchDescriptors = []) => {
       const rowResults = await Promise.all(
@@ -8753,9 +8834,19 @@ export const HomeScreen = {
     const modernSidebarLayoutClass = this.layoutPrefs?.modernSidebar
       ? " home-modern-sidebar-enabled"
       : "";
-    const layoutClass = `home-layout-${this.layoutMode}${modernLandscapeLayoutClass}${modernHeroFullScreenBackdropClass}${modernSidebarLayoutClass}`;
-    const sizingStyle =
-      this.layoutMode === "modern" ? buildModernHomeSizingStyle(this.layoutPrefs) : "";
+    const depthClass = this.layoutPrefs?.cardDepthEnabled
+      ? ` home-card-depth${this.layoutPrefs.cardDepthPostersEnabled !== false ? " depth-posters" : ""}${this.layoutPrefs.cardDepthContinueWatchingEnabled !== false ? " depth-continue-watching" : ""}`
+      : "";
+    const classicGradientClass = this.layoutMode === "classic" && this.layoutPrefs?.classicFocusGradientEnabled
+      ? " home-classic-focus-gradient"
+      : "";
+    const layoutClass = `home-layout-${this.layoutMode}${modernLandscapeLayoutClass}${modernHeroFullScreenBackdropClass}${modernSidebarLayoutClass}${depthClass}${classicGradientClass}`;
+    const sizingStyle = [
+      this.layoutMode === "modern" ? buildModernHomeSizingStyle(this.layoutPrefs) : "",
+      `--card-depth-edge:${Number(this.layoutPrefs?.cardDepthEdgeStrength ?? 28) / 100}`,
+      `--card-depth-sheen:${Number(this.layoutPrefs?.cardDepthSheenStrength ?? 10) / 100}`,
+      `--card-depth-coverage:${Number(this.layoutPrefs?.cardDepthEdgeCoverage ?? 0)}%`
+    ].filter(Boolean).join(";");
     const showPosterLabels = this.layoutPrefs?.posterLabelsEnabled !== false;
     const showCatalogAddonName = this.layoutPrefs?.catalogAddonNameEnabled !== false;
     const showCatalogTypeSuffix = this.layoutPrefs?.catalogTypeSuffixEnabled !== false;
@@ -8819,6 +8910,7 @@ export const HomeScreen = {
         continueWatchingRenderLimit,
         useEpisodeThumbnailsInCw: this.layoutPrefs?.useEpisodeThumbnailsInCw !== false,
         blurContinueWatchingNextUp: resolveContinueWatchingBlurNextUp(this.layoutPrefs),
+        continueWatchingCardStyle: this.layoutPrefs?.continueWatchingCardStyle || "card",
         rowItemLimit,
         showHeroSection,
         showPosterLabels,
@@ -8847,7 +8939,8 @@ export const HomeScreen = {
         loadingCount: effectiveContinueWatchingLoadingCount,
         itemLimit: continueWatchingRenderLimit,
         useEpisodeThumbnails: this.layoutPrefs?.useEpisodeThumbnailsInCw !== false,
-        blurNextUp: resolveContinueWatchingBlurNextUp(this.layoutPrefs)
+        blurNextUp: resolveContinueWatchingBlurNextUp(this.layoutPrefs),
+        cardStyle: this.layoutPrefs?.continueWatchingCardStyle || "card"
       });
       const legacyRowsPayload = renderLegacyCatalogRowsMarkup(this.rows, {
         layoutMode: this.layoutMode,
@@ -8884,7 +8977,7 @@ export const HomeScreen = {
       this.sidebarExpanded && retainedFocusState?.focusKind === "sidebar"
     );
 
-    this.container.innerHTML = `
+    const nextMarkup = `
       <div class="home-shell home-screen-shell ${layoutClass}"${sizingStyle ? ` style="${escapeAttribute(sizingStyle)}"` : ""}>
         ${renderRootSidebar({
           selectedRoute: "home",
@@ -8902,6 +8995,23 @@ export const HomeScreen = {
       </div>
       ${this.renderActiveHoldMenu()}
     `;
+
+    // Returning to Home re-renders several times as cached rows, the background
+    // refresh and the catalog rows each land. When a pass produces markup the
+    // DOM already holds, writing it back costs a full parse, layout and paint of
+    // every card for no visible change - and it destroys the live nodes, which
+    // is what forces focus and scroll to be re-derived afterwards.
+    //
+    // Keep the last generated markup itself: exact equality is required because
+    // addon/catalog text is part of this string and fixed-width hashes can
+    // collide, which could otherwise preserve stale DOM.
+    const shellMounted = Boolean(this.container.querySelector(".home-shell"));
+    const markupUnchanged = shellMounted && this.renderedMarkup === nextMarkup;
+
+    if (!markupUnchanged) {
+      this.container.innerHTML = nextMarkup;
+      this.renderedMarkup = nextMarkup;
+    }
 
     if (modernLandscapePostersEnabled) {
       this.applyCachedModernLandscapePosterMetrics(
@@ -9065,7 +9175,7 @@ export const HomeScreen = {
     this.renderedLayoutMode = this.layoutMode;
     this.ensureHomeTruncationObservers();
     this.scheduleHomeTruncationUpdate();
-    this.scheduleHomeLazyImageHydration();
+    this.scheduleHomeLazyImageHydration(null, { refreshIndex: true });
     this.scheduleReturnFocusRestore();
     const mountedRows = Number(this.navModel?.rows?.length || 0);
     const mountedCards = Number(
@@ -9073,6 +9183,7 @@ export const HomeScreen = {
     );
     logHomePerf("render", {
       ms: Number((homePerfNow() - renderStart).toFixed(2)),
+      domWrite: !markupUnchanged,
       layoutMode: this.layoutMode,
       rows: Number(this.rows?.length || 0),
       mountedRows,
@@ -9082,11 +9193,14 @@ export const HomeScreen = {
     });
   },
 
-  scheduleHomeLazyImageHydration(anchorNode = null) {
+  scheduleHomeLazyImageHydration(anchorNode = null, { refreshIndex = false } = {}) {
     if (anchorNode instanceof HTMLElement) {
       this.pendingHomeLazyImageAnchor = anchorNode;
     } else {
       this.homeLazyImageHydrationNeedsFullScan = true;
+    }
+    if (refreshIndex) {
+      this.homeLazyImageHydrationNeedsIndexRefresh = true;
     }
     if (this.modernVerticalFastScrollState) {
       return;
@@ -9100,16 +9214,34 @@ export const HomeScreen = {
       this.pendingHomeLazyImageAnchor = null;
       const forceFullScan = Boolean(this.homeLazyImageHydrationNeedsFullScan);
       this.homeLazyImageHydrationNeedsFullScan = false;
-      this.hydrateHomeLazyImages(anchor, { forceFullScan });
+      const shouldRefreshIndex = Boolean(this.homeLazyImageHydrationNeedsIndexRefresh);
+      this.homeLazyImageHydrationNeedsIndexRefresh = false;
+      this.hydrateHomeLazyImages(anchor, { forceFullScan, refreshIndex: shouldRefreshIndex });
     });
   },
 
-  hydrateHomeLazyImages(anchorNode = null, { forceFullScan = false } = {}) {
+  buildHomeLazyImageHydrationIndex() {
+    if (!this.container) {
+      this.homeLazyImageHydrationIndex = null;
+      return [];
+    }
+    const imagesByRow = new Map();
+    Array.from(this.container.querySelectorAll(HOME_LAZY_IMAGE_SELECTOR)).forEach((image) => {
+      const row = image.closest(HOME_LAZY_IMAGE_ROW_SELECTOR);
+      const rowImages = imagesByRow.get(row) || [];
+      rowImages.push(image);
+      imagesByRow.set(row, rowImages);
+    });
+    const index = Array.from(imagesByRow, ([row, images]) => ({ row, images }));
+    this.homeLazyImageHydrationIndex = index;
+    return index;
+  },
+
+  hydrateHomeLazyImages(anchorNode = null, { forceFullScan = false, refreshIndex = false } = {}) {
     if (!this.container) {
       return;
     }
-    const rowSelector = ".home-row, .home-modern-row, .home-grid-section, .home-row-continue";
-    const anchorRow = anchorNode?.closest?.(rowSelector) || null;
+    const anchorRow = anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR) || null;
     if (
       !forceFullScan &&
       anchorRow instanceof HTMLElement &&
@@ -9122,12 +9254,11 @@ export const HomeScreen = {
       return;
     }
     this.lastHomeLazyImageHydrationAnchorRow = anchorRow;
-    const images = Array.from(
-      this.container.querySelectorAll(
-        ".home-main .content-poster[data-src], .home-main .home-poster-landscape-logo[data-src], .home-main .home-continue-bg[data-src]"
-      )
-    );
-    if (!images.length) {
+    const imageRows =
+      refreshIndex || !Array.isArray(this.homeLazyImageHydrationIndex)
+        ? this.buildHomeLazyImageHydrationIndex()
+        : this.homeLazyImageHydrationIndex;
+    if (!imageRows.length) {
       return;
     }
     const viewport =
@@ -9137,14 +9268,10 @@ export const HomeScreen = {
     const viewportRect = viewport.getBoundingClientRect();
     const verticalMargin = Platform.isWebOS() || Platform.isTizen() ? 720 : 1200;
     const horizontalMargin = Platform.isWebOS() || Platform.isTizen() ? 520 : 1000;
-    const imagesByRow = new Map();
-    images.forEach((image) => {
-      const row = image.closest(rowSelector);
-      const rowImages = imagesByRow.get(row) || [];
-      rowImages.push(image);
-      imagesByRow.set(row, rowImages);
-    });
-    imagesByRow.forEach((rowImages, row) => {
+    imageRows.forEach(({ row, images }) => {
+      if (row instanceof HTMLElement && !row.isConnected) {
+        return;
+      }
       const shouldHydrateFocusedRow = Boolean(anchorRow && row === anchorRow);
       if (!shouldHydrateFocusedRow && row instanceof HTMLElement) {
         const rowRect = row.getBoundingClientRect();
@@ -9155,8 +9282,8 @@ export const HomeScreen = {
           return;
         }
       }
-      rowImages.forEach((image) => {
-        if (!(image instanceof HTMLImageElement)) {
+      images.forEach((image) => {
+        if (!(image instanceof HTMLImageElement) || !image.isConnected) {
           return;
         }
         const src = String(image.dataset.src || "").trim();
@@ -9958,7 +10085,11 @@ export const HomeScreen = {
 
   collectHeroCandidates(rows) {
     const flat = [];
-    rows.forEach((row) => {
+    const selectedKeys = new Set(this.layoutPrefs?.heroCatalogKeys || []);
+    const eligibleRows = selectedKeys.size
+      ? (rows || []).filter((row) => selectedKeys.has(String(row?.homeCatalogKey || "")))
+      : rows;
+    eligibleRows.forEach((row) => {
       (row?.result?.data?.items || []).slice(0, 4).forEach((item) => {
         const normalized = normalizeHomeRowItem(row, item);
         if (!normalized?.id || flat.some((entry) => entry.id === normalized.id)) {
@@ -10317,7 +10448,7 @@ export const HomeScreen = {
       this.invalidateNavigationModel();
       this.buildNavigationModel();
     }
-    this.scheduleHomeLazyImageHydration();
+    this.scheduleHomeLazyImageHydration(null, { refreshIndex: true });
     return true;
   },
 
@@ -10526,7 +10657,7 @@ export const HomeScreen = {
             this.invalidateNavigationModel();
             this.buildNavigationModel();
           }
-          this.scheduleHomeLazyImageHydration();
+          this.scheduleHomeLazyImageHydration(null, { refreshIndex: true });
           return true;
         };
         if (totalVisible < currentItems.length) {
@@ -10764,6 +10895,8 @@ export const HomeScreen = {
     }
     this.pendingHomeLazyImageAnchor = null;
     this.homeLazyImageHydrationNeedsFullScan = false;
+    this.homeLazyImageHydrationNeedsIndexRefresh = false;
+    this.homeLazyImageHydrationIndex = null;
     this.lastHomeLazyImageHydrationAnchorRow = null;
     this.lastDirectionalKeyAtByDirection = {};
     this.homeTruncationScope = null;
@@ -10806,6 +10939,7 @@ export const HomeScreen = {
       this.container.style.removeProperty("left");
       this.container.style.removeProperty("visibility");
       this.container.style.removeProperty("pointer-events");
+      this.renderedMarkup = null;
       ScreenUtils.hide(this.container);
     }
   }

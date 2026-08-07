@@ -108,6 +108,8 @@ export function getPosterOptions(state, options = {}) {
       label:
         state.sourceMode === LibrarySourceMode.TRAKT
           ? t("library_manage_lists", {}, "Manage Lists")
+          : state.sourceMode === LibrarySourceMode.SIMKL
+            ? "Manage Simkl Status"
           : state.isSaved
             ? t("detail.removeFromLibrary", {}, "Remove from Library")
             : t("detail.addToLibrary", {}, "Add to Library")
@@ -133,7 +135,7 @@ export async function activatePosterOption(state, action, _options = {}) {
     return { type: "details", item };
   }
   if (action === "toggleLibrary") {
-    if (state.sourceMode === LibrarySourceMode.TRAKT) {
+    if (state.sourceMode !== LibrarySourceMode.LOCAL) {
       return { type: "listPicker", state: await createPosterListPickerState(state) };
     }
     const isSaved = await savedLibraryRepository.toggle({
@@ -188,7 +190,7 @@ export async function createPosterListPickerState(state) {
   const tabs = await libraryRepository.getListTabs().catch(() => []);
   const resolvedTabs =
     Array.isArray(tabs) && tabs.length
-      ? tabs
+      ? tabs.filter((tab) => tab.isMembershipDestination !== false)
       : [{ key: "local", title: t("detail.library", {}, "Library"), type: "local" }];
   const libraryItem = toLibraryItem(item);
   const snapshot = await libraryRepository
@@ -196,6 +198,7 @@ export async function createPosterListPickerState(state) {
     .catch(() => ({ listMembership: {} }));
   return {
     item: libraryItem,
+    sourceMode: state.sourceMode,
     tabs: resolvedTabs,
     membership: Object.fromEntries(
       resolvedTabs.map((tab) => [tab.key, Boolean(snapshot?.listMembership?.[tab.key])])
@@ -218,8 +221,12 @@ export function getPosterListPickerOptions(picker) {
       className: "poster-list-picker-list-button"
     })),
     {
-      action: "saveLibraryLists",
-      label: t("action_save", {}, "Save"),
+      action: picker.destructiveRemovalRequired
+        ? "confirmDestructiveSimklRemoval"
+        : "saveLibraryLists",
+      label: picker.destructiveRemovalRequired
+        ? "Remove status and clear Simkl history"
+        : t("action_save", {}, "Save"),
       className: "poster-list-picker-save-button"
     }
   ];
@@ -349,23 +356,43 @@ export class PosterOptionsDialogController {
     const normalizedAction = String(action || "");
     if (normalizedAction.startsWith("toggleLibraryList:")) {
       const key = normalizedAction.slice("toggleLibraryList:".length);
-      this.listPicker.membership = {
-        ...(this.listPicker.membership || {}),
-        [key]: !this.listPicker.membership?.[key]
-      };
-      this.dialog?.setButtonSelected?.(normalizedAction, Boolean(this.listPicker.membership[key]));
+      const nextSelected = !this.listPicker.membership?.[key];
+      this.listPicker.membership =
+        this.listPicker.sourceMode === LibrarySourceMode.SIMKL
+          ? Object.fromEntries(
+              this.listPicker.tabs.map((tab) => [tab.key, nextSelected && tab.key === key])
+            )
+          : { ...(this.listPicker.membership || {}), [key]: nextSelected };
+      this.listPicker.destructiveRemovalRequired = false;
+      if (this.listPicker.sourceMode === LibrarySourceMode.SIMKL) {
+        this.mountListPickerDialog();
+      } else {
+        this.dialog?.setButtonSelected?.(
+          normalizedAction,
+          Boolean(this.listPicker.membership[key])
+        );
+      }
       return true;
     }
-    if (normalizedAction === "saveLibraryLists") {
+    if (
+      normalizedAction === "saveLibraryLists" ||
+      normalizedAction === "confirmDestructiveSimklRemoval"
+    ) {
       try {
         await libraryRepository.applyMembershipChanges(this.listPicker.item, {
           desiredMembership: this.listPicker.membership || {}
+        }, {
+          destructiveRemovalConfirmed: normalizedAction === "confirmDestructiveSimklRemoval"
         });
         this.onChanged?.(this.state);
         this.destroy();
       } catch (error) {
         console.warn("Failed to update library lists", error);
-        this.listPicker.error = t("detail_lists_save_failed", {}, "Could not save list changes.");
+        this.listPicker.destructiveRemovalRequired =
+          error?.code === "SIMKL_DESTRUCTIVE_REMOVAL_REQUIRED";
+        this.listPicker.error = this.listPicker.destructiveRemovalRequired
+          ? "Removing this status will also clear watched history or a rating on Simkl. Confirm only if that is intended."
+          : t("detail_lists_save_failed", {}, "Could not save list changes.");
         this.mountListPickerDialog();
       }
       return true;

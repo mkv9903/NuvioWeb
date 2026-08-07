@@ -7,6 +7,7 @@ import { FocusEngine } from "./ui/navigation/focusEngine.js";
 import { PlayerController } from "./core/player/playerController.js";
 import { AuthManager } from "./core/auth/authManager.js";
 import { AuthState } from "./core/auth/authState.js";
+import { DeviceSessionRegistration } from "./core/auth/deviceSessionRegistration.js";
 import { ProfileManager } from "./core/profile/profileManager.js";
 import { ProfileSyncService } from "./core/profile/profileSyncService.js";
 import { StartupSyncService } from "./core/profile/startupSyncService.js";
@@ -293,6 +294,7 @@ function setupWebOsAppLifecycle() {
     if (recovering || !appShellRendered) {
       return;
     }
+    void DeviceSessionRegistration.requestForegroundRegistration();
     const current = Router.getCurrent();
     if (!current) {
       return;
@@ -394,6 +396,7 @@ async function bootstrapApp() {
   void checkForAppUpdateOnStartup();
 
   markBootStage("Restoring session");
+  DeviceSessionRegistration.start();
   AuthManager.subscribe((state) => {
     if (state === AuthState.LOADING) {
       StartupSyncService.stop();

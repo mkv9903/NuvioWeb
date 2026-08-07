@@ -22,7 +22,10 @@ export const ENV_PROPERTY_KEYS = [
   "TRAKT_CLIENT_ID",
   "TRAKT_CLIENT_SECRET",
   "TRAKT_API_URL",
-  "TRAKT_REDIRECT_URI"
+  "TRAKT_REDIRECT_URI",
+  "SIMKL_CLIENT_ID",
+  "SIMKL_API_URL",
+  "SIMKL_APP_NAME"
 ];
 
 const DEFAULT_ENV_VALUES = {
@@ -45,7 +48,10 @@ const DEFAULT_ENV_VALUES = {
   TRAKT_CLIENT_ID: "",
   TRAKT_CLIENT_SECRET: "",
   TRAKT_API_URL: "https://api.trakt.tv",
-  TRAKT_REDIRECT_URI: "urn:ietf:wg:oauth:2.0:oob"
+  TRAKT_REDIRECT_URI: "urn:ietf:wg:oauth:2.0:oob",
+  SIMKL_CLIENT_ID: "",
+  SIMKL_API_URL: "https://api.simkl.com",
+  SIMKL_APP_NAME: "nuvio"
 };
 
 async function pathExists(filePath) {

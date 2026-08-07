@@ -1,4 +1,5 @@
 import { LocalStore } from "../core/storage/localStore.js";
+import { LayoutPreferences } from "../data/local/layoutPreferences.js";
 
 export const ROTATED_DPAD_KEY = "rotatedDpadMapping";
 export const FAST_HORIZONTAL_NAVIGATION_KEY = "fastHorizontalNavigationEnabled";
@@ -85,7 +86,7 @@ export function shouldUseRotatedMapping() {
 }
 
 export function isFastHorizontalNavigationEnabled() {
-  return Boolean(LocalStore.get(FAST_HORIZONTAL_NAVIGATION_KEY, false));
+  return Boolean(LayoutPreferences.get().fastHorizontalNavigationEnabled);
 }
 
 export function normalizeDirectionalKeyCode(code) {

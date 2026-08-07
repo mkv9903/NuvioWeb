@@ -29,11 +29,14 @@ import {
   hasProfileSettingsCloudSyncPending
 } from "../../data/local/profileScopedStore.js";
 import { normalizeSubtitleVerticalOffset } from "../player/subtitleVerticalOffset.js";
+import { isFastHorizontalNavigationEnabled } from "../../platform/sharedKeys.js";
 
 const PULL_RPC = "sync_pull_profile_settings_blob";
 const PUSH_RPC = "sync_push_profile_settings_blob";
 const SETTINGS_SYNC_PLATFORM = "tv";
 const CACHE_KEY = "profileSettingsSyncCache";
+const EXPERIENCE_SETTINGS_FEATURE = "experience_settings";
+const WEB_EXPERIENCE_MODE = "ADVANCED";
 
 function resolveProfileId(profileId = null) {
   const raw = Number(profileId ?? ProfileManager.getActiveProfileId() ?? 1);
@@ -123,8 +126,56 @@ function normalizeBlob(blob = {}) {
   };
 }
 
-function encodePreferenceValue(value) {
+function readEncodedPreferenceValue(featurePayload = {}, key = "") {
+  const entry = featurePayload?.[key];
+  return isEncodedPreferenceValue(entry) ? entry.value : entry;
+}
+
+function hasValidExperienceMode(blob = {}) {
+  const mode = String(
+    readEncodedPreferenceValue(blob?.features?.[EXPERIENCE_SETTINGS_FEATURE], "mode") || ""
+  ).toUpperCase();
+  return mode === "ESSENTIAL" || mode === "ADVANCED";
+}
+
+function ensureExperienceSettingsContract(blob = {}) {
+  const normalized = normalizeBlob(blob);
+  if (hasValidExperienceMode(normalized)) {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    features: {
+      ...normalized.features,
+      [EXPERIENCE_SETTINGS_FEATURE]: {
+        ...(normalized.features[EXPERIENCE_SETTINGS_FEATURE] || {}),
+        mode: { type: "string", value: WEB_EXPERIENCE_MODE }
+      },
+      layout_settings: {
+        ...(normalized.features.layout_settings || {}),
+        has_chosen_layout: { type: "boolean", value: true }
+      }
+    }
+  };
+}
+
+function shouldSerializeLayoutStringArrayAsString(featureName = "", keyName = "") {
+  return (
+    String(featureName || "").trim() === "layout_settings" &&
+    ["hero_catalog_keys", "home_catalog_order_keys", "disabled_home_catalog_keys"].includes(
+      String(keyName || "").trim()
+    )
+  );
+}
+
+export function encodePreferenceValue(value, keyName = "", featureName = "") {
   if (isEncodedPreferenceValue(value)) {
+    if (shouldSerializeLayoutStringArrayAsString(featureName, keyName) && value.type === "string_set") {
+      const normalized = Array.isArray(value.value)
+        ? value.value.map((entry) => String(entry || "").trim()).filter(Boolean)
+        : [];
+      return { type: "string", value: JSON.stringify(Array.from(new Set(normalized)).sort()) };
+    }
     return cloneValue(value);
   }
   if (typeof value === "string") {
@@ -139,12 +190,16 @@ function encodePreferenceValue(value) {
       : { type: "float", value };
   }
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
-    return { type: "string_set", value: Array.from(new Set(value)).sort() };
+    const normalized = Array.from(new Set(value)).sort();
+    if (shouldSerializeLayoutStringArrayAsString(featureName, keyName)) {
+      return { type: "string", value: JSON.stringify(normalized) };
+    }
+    return { type: "string_set", value: normalized };
   }
   return null;
 }
 
-function encodeFeaturePayload(featurePayload = {}) {
+function encodeFeaturePayload(featurePayload = {}, featureName = "") {
   if (!isPlainObject(featurePayload)) {
     return {};
   }
@@ -153,7 +208,7 @@ function encodeFeaturePayload(featurePayload = {}) {
     if (!normalizedKey) {
       return accumulator;
     }
-    const encodedValue = encodePreferenceValue(value);
+    const encodedValue = encodePreferenceValue(value, normalizedKey, featureName);
     if (encodedValue) {
       accumulator[normalizedKey] = encodedValue;
     }
@@ -378,6 +433,13 @@ function normalizeAudioLanguageForWeb(value) {
   return normalized.toLowerCase();
 }
 
+function normalizeSecondaryAudioLanguageForAndroid(value) {
+  const normalized = normalizeAudioLanguageForAndroid(value);
+  return ["DEFAULT", "DEVICE", "FORCED"].includes(String(normalized).toUpperCase())
+    ? null
+    : normalized;
+}
+
 function normalizeHomeLayoutForAndroid(value) {
   const normalized = String(value || "modern")
     .trim()
@@ -406,18 +468,25 @@ function normalizeHomeLayoutForWeb(value) {
   }
 }
 
-function normalizeDiscoverLocationForAndroid(enabled) {
-  return enabled === false ? "OFF" : "IN_SEARCH";
+function normalizeDiscoverLocationForAndroid(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return ["IN_SEARCH", "IN_SIDEBAR", "OFF"].includes(normalized)
+    ? normalized
+    : value === false
+      ? "OFF"
+      : "IN_SEARCH";
 }
 
-function normalizeSearchDiscoverEnabledForWeb(value) {
+function normalizeDiscoverLocationForWeb(value) {
   const normalized = String(value || "")
     .trim()
     .toUpperCase();
   if (!normalized) {
-    return null;
+    return "in_search";
   }
-  return normalized !== "OFF";
+  return ["IN_SEARCH", "IN_SIDEBAR", "OFF"].includes(normalized)
+    ? normalized.toLowerCase()
+    : "in_search";
 }
 
 function normalizeTrailerTargetForAndroid(value) {
@@ -440,28 +509,36 @@ function normalizeTraktWatchProgressSourceForAndroid(value) {
   const normalized = String(value || "trakt")
     .trim()
     .toLowerCase();
-  return normalized === "nuvio_sync" || normalized === "nuviosync" ? "NUVIO_SYNC" : "TRAKT";
+  if (normalized === "nuvio_sync" || normalized === "nuviosync") return "NUVIO_SYNC";
+  if (normalized === "simkl") return "SIMKL";
+  return "TRAKT";
 }
 
 function normalizeTraktWatchProgressSourceForWeb(value) {
   const normalized = String(value || "")
     .trim()
     .toUpperCase();
-  return normalized === "NUVIO_SYNC" ? "nuvio_sync" : "trakt";
+  if (normalized === "NUVIO_SYNC") return "nuvio_sync";
+  if (normalized === "SIMKL") return "simkl";
+  return "trakt";
 }
 
 function normalizeTraktLibrarySourceForAndroid(value) {
   const normalized = String(value || "trakt")
     .trim()
     .toLowerCase();
-  return normalized === "local" ? "LOCAL" : "TRAKT";
+  if (normalized === "local") return "LOCAL";
+  if (normalized === "simkl") return "SIMKL";
+  return "TRAKT";
 }
 
 function normalizeTraktLibrarySourceForWeb(value) {
   const normalized = String(value || "")
     .trim()
     .toUpperCase();
-  return normalized === "LOCAL" ? "local" : "trakt";
+  if (normalized === "LOCAL") return "local";
+  if (normalized === "SIMKL") return "simkl";
+  return "trakt";
 }
 
 function normalizeContinueWatchingSortModeForAndroid(value) {
@@ -543,6 +620,20 @@ function androidColorIntToHex(value, fallback = "#ffffff") {
   return `#${unsigned.toString(16).slice(-6).padStart(6, "0")}`;
 }
 
+function cssColorToAndroidColorInt(value, fallback = "#00000000") {
+  const match = String(value || fallback).trim().match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/i);
+  const rgb = match?.[1] || "000000";
+  const alpha = match?.[2] || "ff";
+  return (parseInt(`${alpha}${rgb}`, 16) | 0);
+}
+
+function androidColorIntToCss(value, fallback = "#00000000") {
+  const parsed = numberOrNull(value);
+  if (parsed == null) return fallback;
+  const argb = (parsed >>> 0).toString(16).padStart(8, "0");
+  return `#${argb.slice(2)}${argb.slice(0, 2)}`.toUpperCase();
+}
+
 const FEATURE_ADAPTERS = {
   theme_settings: {
     export(profileId) {
@@ -551,7 +642,8 @@ const FEATURE_ADAPTERS = {
         selected_theme: String(theme.themeName || "WHITE").toUpperCase(),
         selected_font: String(theme.fontFamily || "INTER").toUpperCase(),
         amoled_mode: Boolean(theme.amoledMode),
-        amoled_surfaces_mode: Boolean(theme.amoledSurfacesMode)
+        amoled_surfaces_mode: Boolean(theme.amoledSurfacesMode),
+        settings_ui_style: String(theme.settingsUiStyle || "CLASSIC").toUpperCase()
       };
     },
     project(rawFeature = {}) {
@@ -569,6 +661,7 @@ const FEATURE_ADAPTERS = {
       if (booleanOrNull(raw.amoled_surfaces_mode) != null) {
         projected.amoled_surfaces_mode = Boolean(raw.amoled_surfaces_mode);
       }
+      if (stringOrNull(raw.settings_ui_style)) projected.settings_ui_style = String(raw.settings_ui_style).toUpperCase();
       return projected;
     },
     import(profileId, rawFeature = {}) {
@@ -586,6 +679,7 @@ const FEATURE_ADAPTERS = {
       if (booleanOrNull(raw.amoled_surfaces_mode) != null) {
         partial.amoledSurfacesMode = Boolean(raw.amoled_surfaces_mode);
       }
+      if (stringOrNull(raw.settings_ui_style)) partial.settingsUiStyle = String(raw.settings_ui_style).toUpperCase();
       if (!Object.keys(partial).length) {
         return false;
       }
@@ -606,10 +700,12 @@ const FEATURE_ADAPTERS = {
         modern_hero_full_screen_backdrop: Boolean(layout.modernHeroFullScreenBackdropEnabled),
         hero_section_enabled: Boolean(layout.heroSectionEnabled),
         search_discover_enabled: Boolean(layout.searchDiscoverEnabled),
-        discover_location: normalizeDiscoverLocationForAndroid(layout.searchDiscoverEnabled),
+        discover_location: normalizeDiscoverLocationForAndroid(layout.discoverLocation),
+        hero_catalog_keys: Array.isArray(layout.heroCatalogKeys) ? layout.heroCatalogKeys : [],
         poster_labels_enabled: Boolean(layout.posterLabelsEnabled),
         catalog_addon_name_enabled: Boolean(layout.catalogAddonNameEnabled),
         catalog_type_suffix_enabled: Boolean(layout.catalogTypeSuffixEnabled),
+        classic_focus_gradient_enabled: Boolean(layout.classicFocusGradientEnabled),
         focused_poster_backdrop_expand_enabled: Boolean(layout.focusedPosterBackdropExpandEnabled),
         focused_poster_backdrop_expand_delay_seconds: Math.max(
           0,
@@ -623,11 +719,27 @@ const FEATURE_ADAPTERS = {
           layout.focusedPosterBackdropTrailerPlaybackTarget
         ),
         poster_card_width_dp: Math.max(72, Number(layout.posterCardWidthDp ?? 126) || 126),
+        poster_card_height_dp: Math.max(
+          108,
+          Math.trunc((Number(layout.posterCardWidthDp ?? 126) || 126) * 1.5)
+        ),
         poster_card_corner_radius_dp: Math.max(
           0,
           Number(layout.posterCardCornerRadiusDp ?? 12) || 12
         ),
+        card_depth_enabled: Boolean(layout.cardDepthEnabled),
+        card_depth_edge_strength: Number(layout.cardDepthEdgeStrength ?? 28),
+        card_depth_sheen_strength: Number(layout.cardDepthSheenStrength ?? 10),
+        card_depth_edge_coverage: Number(layout.cardDepthEdgeCoverage ?? 0),
+        card_depth_posters_enabled: layout.cardDepthPostersEnabled !== false,
+        card_depth_continue_watching_enabled: layout.cardDepthContinueWatchingEnabled !== false,
+        card_depth_episode_cards_enabled: layout.cardDepthEpisodeCardsEnabled !== false,
+        card_depth_cast_enabled: layout.cardDepthCastEnabled !== false,
+        card_depth_trailers_enabled: layout.cardDepthTrailersEnabled !== false,
+        continue_watching_card_style: String(layout.continueWatchingCardStyle || "card").toUpperCase(),
         detail_page_trailer_button_enabled: Boolean(layout.detailPageTrailerButtonEnabled),
+        prefer_external_meta_addon_detail: layout.preferExternalMetaAddonDetail !== false,
+        show_full_release_date: layout.showFullReleaseDate !== false,
         blur_unwatched_episodes: Boolean(layout.blurUnwatchedEpisodes),
         hide_unreleased_content: Boolean(layout.hideUnreleasedContent),
         use_episode_thumbnails_in_cw: layout.useEpisodeThumbnailsInCw !== false,
@@ -636,7 +748,8 @@ const FEATURE_ADAPTERS = {
         next_up_from_furthest_episode: layout.nextUpFromFurthestEpisode !== false,
         continue_watching_sort_mode: normalizeContinueWatchingSortModeForAndroid(
           layout.continueWatchingSortMode
-        )
+        ),
+        fast_horizontal_navigation_enabled: isFastHorizontalNavigationEnabled()
       };
     },
     project(rawFeature = {}) {
@@ -658,6 +771,7 @@ const FEATURE_ADAPTERS = {
         "poster_labels_enabled",
         "catalog_addon_name_enabled",
         "catalog_type_suffix_enabled",
+        "classic_focus_gradient_enabled",
         "focused_poster_backdrop_expand_enabled",
         "focused_poster_backdrop_trailer_enabled",
         "focused_poster_backdrop_trailer_muted",
@@ -668,6 +782,7 @@ const FEATURE_ADAPTERS = {
         "blur_continue_watching_next_up",
         "show_unaired_next_up",
         "next_up_from_furthest_episode"
+        ,"card_depth_enabled","card_depth_posters_enabled","card_depth_continue_watching_enabled","card_depth_episode_cards_enabled","card_depth_cast_enabled","card_depth_trailers_enabled","prefer_external_meta_addon_detail","show_full_release_date"
       ].forEach((key) => {
         if (booleanOrNull(raw[key]) != null) {
           projected[key] = Boolean(raw[key]);
@@ -681,13 +796,11 @@ const FEATURE_ADAPTERS = {
       }
       if (stringOrNull(raw.discover_location)) {
         projected.discover_location = String(raw.discover_location).trim().toUpperCase();
-        projected.search_discover_enabled = normalizeSearchDiscoverEnabledForWeb(
-          raw.discover_location
-        );
+        projected.search_discover_enabled = String(raw.discover_location).toUpperCase() !== "OFF";
       } else if (booleanOrNull(raw.search_discover_enabled) != null) {
         projected.search_discover_enabled = Boolean(raw.search_discover_enabled);
         projected.discover_location = normalizeDiscoverLocationForAndroid(
-          raw.search_discover_enabled
+          raw.search_discover_enabled === false ? "OFF" : "IN_SEARCH"
         );
       }
       if (stringOrNull(raw.focused_poster_backdrop_trailer_playback_target)) {
@@ -699,13 +812,27 @@ const FEATURE_ADAPTERS = {
           raw.continue_watching_sort_mode
         );
       }
+      if (stringOrNull(raw.continue_watching_card_style)) projected.continue_watching_card_style = String(raw.continue_watching_card_style).toUpperCase();
+      if (Array.isArray(raw.hero_catalog_keys)) projected.hero_catalog_keys = raw.hero_catalog_keys.map(String).filter(Boolean);
+      ["card_depth_edge_strength", "card_depth_sheen_strength", "card_depth_edge_coverage"].forEach((key) => { if (numberOrNull(raw[key]) != null) projected[key] = Math.min(100, Math.max(0, Math.trunc(Number(raw[key])))); });
       if (numberOrNull(raw.poster_card_width_dp) != null) {
         projected.poster_card_width_dp = Math.max(72, Math.trunc(Number(raw.poster_card_width_dp)));
+      }
+      if (numberOrNull(raw.poster_card_height_dp) != null) {
+        projected.poster_card_height_dp = Math.max(
+          108,
+          Math.trunc(Number(raw.poster_card_height_dp))
+        );
       }
       if (numberOrNull(raw.poster_card_corner_radius_dp) != null) {
         projected.poster_card_corner_radius_dp = Math.max(
           0,
           Math.trunc(Number(raw.poster_card_corner_radius_dp))
+        );
+      }
+      if (booleanOrNull(raw.fast_horizontal_navigation_enabled) != null) {
+        projected.fast_horizontal_navigation_enabled = Boolean(
+          raw.fast_horizontal_navigation_enabled
         );
       }
       return projected;
@@ -735,9 +862,9 @@ const FEATURE_ADAPTERS = {
         partial.heroSectionEnabled = Boolean(raw.hero_section_enabled);
       }
       if (stringOrNull(raw.discover_location)) {
-        partial.searchDiscoverEnabled = normalizeSearchDiscoverEnabledForWeb(raw.discover_location);
+        partial.discoverLocation = normalizeDiscoverLocationForWeb(raw.discover_location);
       } else if (booleanOrNull(raw.search_discover_enabled) != null) {
-        partial.searchDiscoverEnabled = Boolean(raw.search_discover_enabled);
+        partial.discoverLocation = raw.search_discover_enabled ? "in_search" : "off";
       }
       if (booleanOrNull(raw.poster_labels_enabled) != null) {
         partial.posterLabelsEnabled = Boolean(raw.poster_labels_enabled);
@@ -748,6 +875,9 @@ const FEATURE_ADAPTERS = {
       if (booleanOrNull(raw.catalog_type_suffix_enabled) != null) {
         partial.catalogTypeSuffixEnabled = Boolean(raw.catalog_type_suffix_enabled);
       }
+      if (booleanOrNull(raw.classic_focus_gradient_enabled) != null) partial.classicFocusGradientEnabled = Boolean(raw.classic_focus_gradient_enabled);
+      if (Array.isArray(raw.hero_catalog_keys)) partial.heroCatalogKeys = raw.hero_catalog_keys.map(String).filter(Boolean);
+      if (stringOrNull(raw.continue_watching_card_style)) partial.continueWatchingCardStyle = String(raw.continue_watching_card_style).toLowerCase();
       if (booleanOrNull(raw.focused_poster_backdrop_expand_enabled) != null) {
         partial.focusedPosterBackdropExpandEnabled = Boolean(
           raw.focused_poster_backdrop_expand_enabled
@@ -783,6 +913,20 @@ const FEATURE_ADAPTERS = {
           Math.trunc(Number(raw.poster_card_corner_radius_dp))
         );
       }
+      if (booleanOrNull(raw.fast_horizontal_navigation_enabled) != null) {
+        partial.fastHorizontalNavigationEnabled = Boolean(
+          raw.fast_horizontal_navigation_enabled
+        );
+      }
+      const layoutBooleanFields = {
+        card_depth_enabled: "cardDepthEnabled", card_depth_posters_enabled: "cardDepthPostersEnabled",
+        card_depth_continue_watching_enabled: "cardDepthContinueWatchingEnabled", card_depth_episode_cards_enabled: "cardDepthEpisodeCardsEnabled",
+        card_depth_cast_enabled: "cardDepthCastEnabled", card_depth_trailers_enabled: "cardDepthTrailersEnabled",
+        prefer_external_meta_addon_detail: "preferExternalMetaAddonDetail", show_full_release_date: "showFullReleaseDate"
+      };
+      Object.entries(layoutBooleanFields).forEach(([key, field]) => { if (booleanOrNull(raw[key]) != null) partial[field] = Boolean(raw[key]); });
+      const layoutNumberFields = { card_depth_edge_strength: "cardDepthEdgeStrength", card_depth_sheen_strength: "cardDepthSheenStrength", card_depth_edge_coverage: "cardDepthEdgeCoverage" };
+      Object.entries(layoutNumberFields).forEach(([key, field]) => { if (numberOrNull(raw[key]) != null) partial[field] = Number(raw[key]); });
       if (booleanOrNull(raw.detail_page_trailer_button_enabled) != null) {
         partial.detailPageTrailerButtonEnabled = Boolean(raw.detail_page_trailer_button_enabled);
       }
@@ -882,6 +1026,9 @@ const FEATURE_ADAPTERS = {
       const settings = PlayerSettingsStore.getForProfile(profileId);
       return {
         preferred_audio_language: normalizeAudioLanguageForAndroid(settings.preferredAudioLanguage),
+        secondary_preferred_audio_language: normalizeSecondaryAudioLanguageForAndroid(
+          settings.secondaryPreferredAudioLanguage
+        ),
         subtitle_preferred_language: normalizePreferredSubtitleLanguageForAndroid(settings),
         subtitle_secondary_language: normalizeSecondarySubtitleLanguageForAndroid(settings),
         subtitle_use_forced_subtitles: shouldUseForcedSubtitlesForAndroid(settings),
@@ -894,11 +1041,22 @@ const FEATURE_ADAPTERS = {
         ),
         subtitle_bold: Boolean(settings.subtitleStyle?.bold),
         subtitle_text_color: hexToAndroidColorInt(settings.subtitleStyle?.textColor, "#ffffff"),
+        subtitle_background_color: cssColorToAndroidColorInt(settings.subtitleStyle?.backgroundColor),
         subtitle_outline_enabled: settings.subtitleStyle?.outlineEnabled !== false,
         subtitle_outline_color: hexToAndroidColorInt(
           settings.subtitleStyle?.outlineColor,
           "#000000"
         ),
+        loading_overlay_enabled: settings.loadingOverlayEnabled !== false,
+        show_player_loading_status: settings.showPlayerLoadingStatus !== false,
+        pause_overlay_enabled: settings.pauseOverlayEnabled !== false,
+        parental_guide_enabled: settings.parentalGuideEnabled !== false,
+        osd_clock_enabled: settings.osdClockEnabled !== false,
+        subtitle_show_only_preferred_languages: Boolean(
+          settings.subtitleStyle?.showOnlyPreferredLanguages
+        ),
+        auto_skip_segment_types: Array.isArray(settings.autoSkipSegmentTypes) ? settings.autoSkipSegmentTypes : [],
+        addon_subtitle_startup_mode: String(settings.addonSubtitleStartupMode || "ALL_SUBTITLES"),
         audio_amplification_db: Math.max(
           0,
           Math.trunc(Number(settings.audioAmplificationDb ?? 0) || 0)
@@ -957,6 +1115,14 @@ const FEATURE_ADAPTERS = {
           raw.preferred_audio_language
         );
       }
+      if (stringOrNull(raw.secondary_preferred_audio_language)) {
+        const secondaryAudioLanguage = normalizeSecondaryAudioLanguageForAndroid(
+          raw.secondary_preferred_audio_language
+        );
+        if (secondaryAudioLanguage) {
+          projected.secondary_preferred_audio_language = secondaryAudioLanguage;
+        }
+      }
       if (stringOrNull(raw.subtitle_preferred_language)) {
         projected.subtitle_preferred_language = normalizeSubtitleLanguage(
           raw.subtitle_preferred_language,
@@ -980,6 +1146,7 @@ const FEATURE_ADAPTERS = {
         "stream_auto_play_reuse_binge_group",
         "stream_reuse_last_link_enabled",
         "still_watching_enabled"
+        ,"loading_overlay_enabled","show_player_loading_status","pause_overlay_enabled","parental_guide_enabled","osd_clock_enabled","subtitle_show_only_preferred_languages"
       ].forEach((key) => {
         if (booleanOrNull(raw[key]) != null) {
           projected[key] = Boolean(raw[key]);
@@ -988,6 +1155,7 @@ const FEATURE_ADAPTERS = {
       [
         "subtitle_size",
         "subtitle_text_color",
+        "subtitle_background_color",
         "subtitle_outline_color",
         "audio_amplification_db"
       ].forEach((key) => {
@@ -1007,6 +1175,8 @@ const FEATURE_ADAPTERS = {
           }
         }
       );
+      if (Array.isArray(raw.auto_skip_segment_types)) projected.auto_skip_segment_types = raw.auto_skip_segment_types;
+      if (stringOrNull(raw.addon_subtitle_startup_mode)) projected.addon_subtitle_startup_mode = String(raw.addon_subtitle_startup_mode).toUpperCase();
       if (numberOrNull(raw.stream_auto_play_timeout_seconds) != null) {
         projected.stream_auto_play_timeout_seconds = Math.max(
           0,
@@ -1063,6 +1233,9 @@ const FEATURE_ADAPTERS = {
       const partial = {};
       const subtitleStyle = {};
       const preferredAudioLanguage = normalizeAudioLanguageForWeb(raw.preferred_audio_language);
+      const secondaryPreferredAudioLanguage = normalizeAudioLanguageForWeb(
+        raw.secondary_preferred_audio_language
+      );
       let subtitleLanguage = stringOrNull(raw.subtitle_preferred_language)
         ? normalizeSubtitleLanguage(raw.subtitle_preferred_language, "off")
         : null;
@@ -1089,6 +1262,9 @@ const FEATURE_ADAPTERS = {
       if (preferredAudioLanguage) {
         partial.preferredAudioLanguage = preferredAudioLanguage;
       }
+      if (secondaryPreferredAudioLanguage) {
+        partial.secondaryPreferredAudioLanguage = secondaryPreferredAudioLanguage;
+      }
       if (subtitleLanguage) {
         partial.subtitleLanguage = subtitleLanguage;
         partial.subtitlesEnabled = subtitleLanguage !== "off";
@@ -1100,6 +1276,11 @@ const FEATURE_ADAPTERS = {
       }
       if (useForcedSubtitles != null) {
         subtitleStyle.useForcedSubtitles = Boolean(useForcedSubtitles);
+      }
+      if (booleanOrNull(raw.subtitle_show_only_preferred_languages) != null) {
+        subtitleStyle.showOnlyPreferredLanguages = Boolean(
+          raw.subtitle_show_only_preferred_languages
+        );
       }
       if (numberOrNull(raw.subtitle_size) != null) {
         subtitleStyle.fontSize = Math.min(200, Math.max(50, Math.trunc(Number(raw.subtitle_size))));
@@ -1114,6 +1295,9 @@ const FEATURE_ADAPTERS = {
       }
       if (numberOrNull(raw.subtitle_text_color) != null) {
         subtitleStyle.textColor = androidColorIntToHex(raw.subtitle_text_color, "#ffffff");
+      }
+      if (numberOrNull(raw.subtitle_background_color) != null) {
+        subtitleStyle.backgroundColor = androidColorIntToCss(raw.subtitle_background_color);
       }
       if (booleanOrNull(raw.subtitle_outline_enabled) != null) {
         subtitleStyle.outlineEnabled = Boolean(raw.subtitle_outline_enabled);
@@ -1130,6 +1314,10 @@ const FEATURE_ADAPTERS = {
       if (booleanOrNull(raw.skip_intro_enabled) != null) {
         partial.skipIntroEnabled = Boolean(raw.skip_intro_enabled);
       }
+      const playerBooleanFields = { loading_overlay_enabled: "loadingOverlayEnabled", show_player_loading_status: "showPlayerLoadingStatus", pause_overlay_enabled: "pauseOverlayEnabled", parental_guide_enabled: "parentalGuideEnabled", osd_clock_enabled: "osdClockEnabled" };
+      Object.entries(playerBooleanFields).forEach(([key, field]) => { if (booleanOrNull(raw[key]) != null) partial[field] = Boolean(raw[key]); });
+      if (Array.isArray(raw.auto_skip_segment_types)) partial.autoSkipSegmentTypes = raw.auto_skip_segment_types;
+      if (stringOrNull(raw.addon_subtitle_startup_mode)) partial.addonSubtitleStartupMode = String(raw.addon_subtitle_startup_mode).toUpperCase();
       if (booleanOrNull(raw.stream_auto_play_next_episode_enabled) != null) {
         partial.autoplayNextEpisode = Boolean(raw.stream_auto_play_next_episode_enabled);
       }
@@ -1220,7 +1408,8 @@ const FEATURE_ADAPTERS = {
     export(profileId) {
       const settings = PlayerSettingsStore.getForProfile(profileId);
       return {
-        trailer_enabled: Boolean(settings.trailerAutoplay)
+        trailer_enabled: Boolean(settings.trailerAutoplay),
+        trailer_delay_seconds: Math.min(15, Math.max(0, Number(settings.trailerDelaySeconds ?? 7) || 0))
       };
     },
     project(rawFeature = {}) {
@@ -1229,17 +1418,19 @@ const FEATURE_ADAPTERS = {
       if (booleanOrNull(raw.trailer_enabled) != null) {
         projected.trailer_enabled = Boolean(raw.trailer_enabled);
       }
+      if (numberOrNull(raw.trailer_delay_seconds) != null) projected.trailer_delay_seconds = Math.min(15, Math.max(0, Math.trunc(Number(raw.trailer_delay_seconds))));
       return projected;
     },
     import(profileId, rawFeature = {}) {
       const raw = normalizeFeaturePayload(rawFeature);
-      if (booleanOrNull(raw.trailer_enabled) == null) {
+      if (booleanOrNull(raw.trailer_enabled) == null && numberOrNull(raw.trailer_delay_seconds) == null) {
         return false;
       }
       PlayerSettingsStore.setForProfile(
         profileId,
         {
-          trailerAutoplay: Boolean(raw.trailer_enabled)
+          ...(booleanOrNull(raw.trailer_enabled) != null ? { trailerAutoplay: Boolean(raw.trailer_enabled) } : {}),
+          ...(numberOrNull(raw.trailer_delay_seconds) != null ? { trailerDelaySeconds: Number(raw.trailer_delay_seconds) } : {})
         },
         { silentSync: true }
       );
@@ -1362,7 +1553,8 @@ const FEATURE_ADAPTERS = {
         mdblist_show_letterboxd: settings.showLetterboxd !== false,
         mdblist_show_tomatoes: settings.showTomatoes !== false,
         mdblist_show_audience: settings.showAudience !== false,
-        mdblist_show_metacritic: settings.showMetacritic !== false
+        mdblist_show_metacritic: settings.showMetacritic !== false,
+        mdblist_show_mal: settings.showMal !== false
       };
     },
     project(rawFeature = {}) {
@@ -1381,7 +1573,8 @@ const FEATURE_ADAPTERS = {
         "mdblist_show_letterboxd",
         "mdblist_show_tomatoes",
         "mdblist_show_audience",
-        "mdblist_show_metacritic"
+        "mdblist_show_metacritic",
+        "mdblist_show_mal"
       ].forEach((key) => {
         if (booleanOrNull(raw[key]) != null) {
           projected[key] = Boolean(raw[key]);
@@ -1419,6 +1612,9 @@ const FEATURE_ADAPTERS = {
       if (booleanOrNull(raw.mdblist_show_metacritic) != null) {
         partial.showMetacritic = Boolean(raw.mdblist_show_metacritic);
       }
+      if (booleanOrNull(raw.mdblist_show_mal) != null) {
+        partial.showMal = Boolean(raw.mdblist_show_mal);
+      }
       if (!Object.keys(partial).length) {
         return false;
       }
@@ -1437,7 +1633,9 @@ const FEATURE_ADAPTERS = {
         watch_progress_source: normalizeTraktWatchProgressSourceForAndroid(
           settings.watchProgressSource
         ),
-        library_source_mode: normalizeTraktLibrarySourceForAndroid(settings.librarySourceMode)
+        library_source_mode: normalizeTraktLibrarySourceForAndroid(settings.librarySourceMode),
+        simkl_anime_id_preference: String(settings.simklAnimeIdPreference || "imdb").toUpperCase(),
+        more_like_this_source: String(settings.moreLikeThisSource || "trakt").toUpperCase()
       };
     },
     project(rawFeature = {}) {
@@ -1461,6 +1659,12 @@ const FEATURE_ADAPTERS = {
           raw.library_source_mode
         );
       }
+      if (stringOrNull(raw.simkl_anime_id_preference)) {
+        projected.simkl_anime_id_preference = String(raw.simkl_anime_id_preference).toUpperCase();
+      }
+      if (stringOrNull(raw.more_like_this_source)) {
+        projected.more_like_this_source = String(raw.more_like_this_source).toUpperCase();
+      }
       return projected;
     },
     import(profileId, rawFeature = {}) {
@@ -1481,6 +1685,12 @@ const FEATURE_ADAPTERS = {
       }
       if (stringOrNull(raw.library_source_mode)) {
         partial.librarySourceMode = normalizeTraktLibrarySourceForWeb(raw.library_source_mode);
+      }
+      if (stringOrNull(raw.simkl_anime_id_preference)) {
+        partial.simklAnimeIdPreference = String(raw.simkl_anime_id_preference).toLowerCase();
+      }
+      if (stringOrNull(raw.more_like_this_source)) {
+        partial.moreLikeThisSource = String(raw.more_like_this_source).toLowerCase();
       }
       if (!Object.keys(partial).length) {
         return false;
@@ -1816,7 +2026,7 @@ function buildOutgoingBlob(profileId, baseBlob = null) {
   const normalizedBase = normalizeBlob(baseBlob || {});
   const nextFeatures = Object.entries(normalizedBase.features).reduce(
     (accumulator, [featureName, featurePayload]) => {
-      const encodedPayload = encodeFeaturePayload(featurePayload);
+      const encodedPayload = encodeFeaturePayload(featurePayload, featureName);
       if (hasObjectEntries(encodedPayload) || SUPPORTED_FEATURE_NAMES.includes(featureName)) {
         accumulator[featureName] = encodedPayload;
       }
@@ -1828,14 +2038,14 @@ function buildOutgoingBlob(profileId, baseBlob = null) {
   SUPPORTED_FEATURE_NAMES.forEach((featureName) => {
     nextFeatures[featureName] = {
       ...(nextFeatures[featureName] || {}),
-      ...encodeFeaturePayload(FEATURE_ADAPTERS[featureName].export(profileId))
+      ...encodeFeaturePayload(FEATURE_ADAPTERS[featureName].export(profileId), featureName)
     };
   });
 
-  return {
+  return ensureExperienceSettingsContract({
     version: 1,
     features: nextFeatures
-  };
+  });
 }
 
 function extractBlobFromResponse(response) {
@@ -1888,6 +2098,21 @@ export const ProfileSettingsSyncService = {
       const blob = await pullRemoteBlob(resolvedProfileId);
       if (!blob) {
         return false;
+      }
+
+      if (!hasValidExperienceMode(blob)) {
+        const repairedBlob = ensureExperienceSettingsContract(blob);
+        await SupabaseApi.rpc(
+          PUSH_RPC,
+          {
+            p_profile_id: resolvedProfileId,
+            p_settings_json: repairedBlob,
+            p_platform: SETTINGS_SYNC_PLATFORM
+          },
+          true
+        );
+        setCachedBlob(resolvedProfileId, repairedBlob);
+        blob.features = repairedBlob.features;
       }
 
       setCachedBlob(resolvedProfileId, blob);

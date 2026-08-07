@@ -2633,4 +2633,10 @@
     <string name="subtitle_outline_color_subtitle">Cor do contorno das legendas.</string>
     <string name="subtitle_text_color_subtitle">Cor do texto das legendas.</string>
     <string name="player_error_web_headers_unsupported">Esta fonte não é compatível com o leitor deste dispositivo porque requer cabeçalhos de pedido especiais. Experimente outra fonte ou contacte o fornecedor do add-on.</string>
+    <string name="settings_content_discovery">Conteúdo e descoberta</string>
+    <string name="settings_content_discovery_subtitle">Addons, plugins, catálogos e fontes de descoberta</string>
+    <string name="settings_content_discovery_addons_subtitle">Gerir addons, ordem dos catálogos e coleções</string>
+    <string name="settings_content_discovery_plugins_subtitle">Gerir repositórios e fornecedores de streams</string>
+    <string name="settings_stream_display_section">APRESENTAÇÃO</string>
+    <string name="playback_estimated_memory_usage">Uso estimado de memória: %1$d / %2$d MB</string>
 </resources>

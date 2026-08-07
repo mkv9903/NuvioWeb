@@ -55,6 +55,16 @@
     TRAKT_REDIRECT_URI:
       typeof existing.TRAKT_REDIRECT_URI === "undefined"
         ? "urn:ietf:wg:oauth:2.0:oob"
-        : existing.TRAKT_REDIRECT_URI
+        : existing.TRAKT_REDIRECT_URI,
+    SIMKL_CLIENT_ID:
+      typeof existing.SIMKL_CLIENT_ID === "undefined" ? "" : existing.SIMKL_CLIENT_ID,
+    SIMKL_API_URL:
+      typeof existing.SIMKL_API_URL === "undefined"
+        ? "https://api.simkl.com"
+        : existing.SIMKL_API_URL,
+    SIMKL_APP_NAME:
+      typeof existing.SIMKL_APP_NAME === "undefined" || !String(existing.SIMKL_APP_NAME).trim()
+        ? "nuvio"
+        : existing.SIMKL_APP_NAME
   };
 })();

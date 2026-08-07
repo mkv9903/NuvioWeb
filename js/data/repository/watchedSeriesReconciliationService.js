@@ -140,20 +140,30 @@ async function loadSeriesMeta(contentId, contentType, meta = null) {
   }
 }
 
-async function markReleasedEpisodes(contentId, contentType, meta, watchedAt = Date.now()) {
+async function markReleasedEpisodes(
+  contentId,
+  contentType,
+  meta,
+  watchedAt = Date.now(),
+  { skipTrackingWrite = false } = {}
+) {
   const episodes = getReleasedMainEpisodes(meta);
   if (!episodes.length) {
     return false;
   }
   for (const episode of episodes) {
-    await watchedItemsRepository.mark({
-      contentId,
-      contentType,
-      title: episode.title || meta?.name || contentId,
-      season: episode.season,
-      episode: episode.episode,
-      watchedAt
-    });
+    await watchedItemsRepository.mark(
+      {
+        contentId,
+        contentType,
+        title: episode.title || meta?.name || contentId,
+        season: episode.season,
+        episode: episode.episode,
+        videoId: episode.id,
+        watchedAt
+      },
+      { skipTrackingWrite }
+    );
     await watchProgressRepository.saveProgress({
       contentId,
       contentType,
@@ -223,12 +233,15 @@ export const watchedSeriesReconciliationService = {
     );
 
     if (allWatched && !hasSeriesMarker) {
-      await watchedItemsRepository.mark({
-        contentId: normalizedContentId,
-        contentType: normalizedType,
-        title: meta?.name || options.title || normalizedContentId,
-        watchedAt: Date.now()
-      });
+      await watchedItemsRepository.mark(
+        {
+          contentId: normalizedContentId,
+          contentType: normalizedType,
+          title: meta?.name || options.title || normalizedContentId,
+          watchedAt: Date.now()
+        },
+        { skipTrackingWrite: true }
+      );
       detailWatchedEnrichmentService.invalidateCache(normalizedContentId);
       return true;
     }
@@ -257,7 +270,9 @@ export const watchedSeriesReconciliationService = {
       watchedAt
     });
     if (meta) {
-      await markReleasedEpisodes(normalizedContentId, normalizedType, meta, watchedAt);
+      await markReleasedEpisodes(normalizedContentId, normalizedType, meta, watchedAt, {
+        skipTrackingWrite: true
+      });
     }
     detailWatchedEnrichmentService.invalidateCache(normalizedContentId);
     return true;
@@ -275,7 +290,9 @@ export const watchedSeriesReconciliationService = {
     for (const episode of episodes) {
       await watchedItemsRepository.unmark(normalizedContentId, {
         season: episode.season,
-        episode: episode.episode
+        episode: episode.episode,
+        videoId: episode.id,
+        skipTrackingWrite: true
       });
       await watchProgressRepository.removeProgress(normalizedContentId, episode.id);
     }

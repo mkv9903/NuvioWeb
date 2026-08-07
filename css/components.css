@@ -6310,6 +6310,12 @@ button:focus-visible {
   visibility: hidden;
 }
 
+.home-screen-shell.home-layout-modern
+  .home-modern-hero-card.is-hero-focus-pending
+  .home-modern-hero-copy {
+  visibility: hidden;
+}
+
 .home-screen-shell.home-layout-modern .home-hero-logo {
   width: min(100%, var(--modern-hero-logo-max-width));
   max-width: min(100%, var(--modern-hero-logo-max-width));
@@ -7280,6 +7286,54 @@ button:focus-visible {
 .trakt-route-shell .settings-trakt-card {
   min-height: 0;
   max-height: 100%;
+}
+
+.trakt-route-shell .settings-tracking-panel {
+  width: min(78vw, 1180px);
+}
+
+.trakt-route-shell .settings-tracking-hero {
+  min-height: 132px;
+}
+
+.trakt-route-shell .settings-tracking-account-card {
+  border-color: rgba(var(--focus-color-rgb), 0.18);
+}
+
+.settings-row-leading-image {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  object-fit: contain;
+}
+
+.detail-more-like-source {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.trakt-route-shell .settings-tracking-attribution {
+  padding: 4px 8px 24px;
+  text-align: center;
+}
+
+.trakt-route-shell .settings-tracking-sync-info {
+  margin: 8px 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.trakt-route-shell .settings-tracking-sync-info p {
+  margin: 0 0 8px;
+}
+
+.trakt-route-shell .settings-tracking-sync-info p:last-child {
+  margin-bottom: 0;
 }
 
 .nuvio-route-slide-enter,
@@ -11003,6 +11057,7 @@ html.legacy-webos .debug-console-log-frame {
   --player-text-secondary: var(--text-secondary);
   --player-text-tertiary: var(--text-tertiary);
   --player-subtitle-color: #ffffff;
+  --player-subtitle-background: transparent;
   --player-subtitle-outline-color: #000000;
   --player-subtitle-font-size: 120%;
   --player-html-subtitle-font-size: clamp(30px, 4.4vh, 82px);
@@ -11021,7 +11076,7 @@ html.legacy-webos .debug-console-log-frame {
   font-size: var(--player-subtitle-font-size);
   font-weight: var(--player-subtitle-font-weight) !important;
   text-shadow: var(--player-subtitle-shadow);
-  background: transparent;
+  background: var(--player-subtitle-background);
 }
 
 #videoPlayer::-webkit-media-text-track-display,
@@ -11126,7 +11181,82 @@ html.legacy-webos .debug-console-log-frame {
   padding: 0.06em 0.28em;
   white-space: pre-wrap;
   word-break: break-word;
+  background: var(--player-subtitle-background);
+}
+
+.settings-shell[data-settings-style="classic"] .settings-workspace {
+  gap: 28px;
+}
+
+.settings-shell[data-settings-style="classic"] .settings-group-card {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.settings-shell[data-settings-style="zen"] .settings-group-card {
   background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.settings-shell[data-settings-style="zen"] .settings-row {
+  border-radius: 8px;
+}
+
+.settings-shell[data-settings-style="horizon"] .settings-workspace {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 116px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.settings-shell[data-settings-style="horizon"] .settings-sidebar {
+  flex-direction: row;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.settings-shell[data-settings-style="horizon"] .settings-nav-item {
+  flex: 0 0 auto;
+  min-height: 88px;
+  padding: 0 28px;
+}
+
+.settings-shell[data-settings-style="horizon"] .settings-nav-chevron,
+.settings-shell[data-settings-style="horizon"] .settings-scroll-indicator-up,
+.settings-shell[data-settings-style="horizon"] .settings-scroll-indicator-down {
+  display: none;
+}
+
+.home-row-continue-wide .home-continue-card {
+  width: calc(var(--poster-card-width, 126px) * 1.7);
+}
+
+.home-row-continue-poster .home-continue-card {
+  width: var(--poster-card-width, 126px);
+}
+
+.home-row-continue-poster .home-continue-media {
+  aspect-ratio: 2 / 3;
+}
+
+.home-card-depth.depth-posters .poster-card,
+.home-card-depth.depth-posters .home-content-card:not(.home-continue-card),
+.home-card-depth.depth-continue-watching .home-continue-card {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, var(--card-depth-edge, 0.28)),
+    inset 0 18px 28px rgba(255, 255, 255, var(--card-depth-sheen, 0.1));
+}
+
+html[data-card-depth="true"][data-card-depth-episodes="true"] .series-episode-card,
+html[data-card-depth="true"][data-card-depth-cast="true"] .movie-cast-card,
+html[data-card-depth="true"][data-card-depth-trailers="true"] .detail-trailer-card {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, var(--card-depth-edge, 0.28)),
+    inset 0 var(--card-depth-coverage-size, 12px) 28px rgba(255, 255, 255, var(--card-depth-sheen, 0.1));
+}
+
+.home-classic-focus-gradient .home-screen-main {
+  background: linear-gradient(90deg, transparent 52%, rgba(255, 255, 255, 0.045) 100%);
 }
 
 /* Match Android TV's default caption presentation on LG webOS: regular
@@ -17109,6 +17239,10 @@ html.legacy-webos .debug-console-log-frame {
   animation-iteration-count: 1 !important;
   transition-duration: 140ms !important;
   transition-delay: 0ms !important;
+}
+
+.performance-constrained .trakt-route-shell .settings-trakt-options-stack .settings-action-row {
+  transition: none !important;
 }
 
 .performance-constrained .player-loading-identity {

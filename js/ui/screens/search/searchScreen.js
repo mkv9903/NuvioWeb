@@ -510,7 +510,18 @@ export const SearchScreen = {
   async reloadRows() {
     const token = this.loadToken;
     if (this.mode === "search" && this.query.length >= 2) {
-      this.rows = await this.searchRows(this.query, { token });
+      this.rows = await this.searchRows(this.query, {
+        token,
+        onFirstResults: (rows) => {
+          if (token !== this.loadToken) return;
+          this.rows = rows;
+          if (this.shouldPatchResultsWithoutReplacingInput()) {
+            this.renderResultsOnly();
+            return;
+          }
+          this.requestRender();
+        }
+      });
     } else if (this.mode === "discover") {
       this.rows = await this.loadDiscoverRows();
     } else {
@@ -647,12 +658,14 @@ export const SearchScreen = {
       });
   },
 
-  async searchRows(query, { token = this.loadToken } = {}) {
+  async searchRows(query, { token = this.loadToken, onFirstResults = null } = {}) {
     const addons = await addonRepository.getInstalledAddons();
     const searchableCatalogs = buildSearchTargets(addons);
     const batchSize = getSearchCatalogBatchSize();
     const itemLimit = getSearchResultsPerRow();
-    const responses = [];
+    const responses = new Array(searchableCatalogs.length);
+    let nextCatalogIndex = 0;
+    let publishedFirstResults = false;
     const runCatalogSearch = async (catalog) => {
       try {
         const result = await withTimeout(
@@ -680,46 +693,63 @@ export const SearchScreen = {
       }
     };
 
-    if (batchSize > 0 && searchableCatalogs.length > batchSize) {
-      for (let index = 0; index < searchableCatalogs.length; index += batchSize) {
-        if (token !== this.loadToken) {
-          break;
-        }
-        const batch = searchableCatalogs.slice(index, index + batchSize);
-        responses.push(...(await Promise.all(batch.map(runCatalogSearch))));
-        if (index + batchSize < searchableCatalogs.length) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-    } else {
-      responses.push(...(await Promise.all(searchableCatalogs.map(runCatalogSearch))));
-    }
+    const buildRows = () =>
+      responses
+        .filter(({ result } = {}) => result?.status === "success" && result?.data?.items?.length)
+        .map(({ catalog, result }) => {
+          const items = result?.data?.items || [];
+          return {
+            title: formatCatalogRowTitle(
+              catalog.catalogName,
+              catalog.addonName,
+              catalog.type,
+              this.layoutPrefs?.catalogTypeSuffixEnabled !== false
+            ),
+            subtitle:
+              this.layoutPrefs?.catalogAddonNameEnabled !== false
+                ? `from ${catalog.addonName || "Addon"}`
+                : "",
+            type: catalog.type,
+            addonBaseUrl: catalog.addonBaseUrl,
+            addonId: catalog.addonId,
+            addonName: catalog.addonName,
+            catalogId: catalog.catalogId,
+            catalogName: catalog.catalogName,
+            hasMore: Boolean(items.length > itemLimit || result?.data?.hasMore),
+            items: items.slice(0, itemLimit)
+          };
+        });
 
-    return responses
-      .filter(({ result }) => result?.status === "success" && result?.data?.items?.length)
-      .map(({ catalog, result }) => {
-        const items = result?.data?.items || [];
-        return {
-          title: formatCatalogRowTitle(
-            catalog.catalogName,
-            catalog.addonName,
-            catalog.type,
-            this.layoutPrefs?.catalogTypeSuffixEnabled !== false
-          ),
-          subtitle:
-            this.layoutPrefs?.catalogAddonNameEnabled !== false
-              ? `from ${catalog.addonName || "Addon"}`
-              : "",
-          type: catalog.type,
-          addonBaseUrl: catalog.addonBaseUrl,
-          addonId: catalog.addonId,
-          addonName: catalog.addonName,
-          catalogId: catalog.catalogId,
-          catalogName: catalog.catalogName,
-          hasMore: Boolean(items.length > itemLimit || result?.data?.hasMore),
-          items: items.slice(0, itemLimit)
-        };
-      });
+    const publishFirstResults = () => {
+      if (
+        publishedFirstResults ||
+        token !== this.loadToken ||
+        typeof onFirstResults !== "function"
+      ) {
+        return;
+      }
+      const rows = buildRows();
+      if (!rows.length) return;
+      publishedFirstResults = true;
+      onFirstResults(rows);
+    };
+
+    const runWorker = async () => {
+      while (token === this.loadToken) {
+        const index = nextCatalogIndex;
+        nextCatalogIndex += 1;
+        if (index >= searchableCatalogs.length) return;
+        responses[index] = await runCatalogSearch(searchableCatalogs[index]);
+        publishFirstResults();
+      }
+    };
+    const workerCount = Math.min(
+      batchSize > 0 ? batchSize : searchableCatalogs.length,
+      searchableCatalogs.length
+    );
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+    return buildRows();
   },
 
   renderRows() {
@@ -738,7 +768,7 @@ export const SearchScreen = {
           <span class="search-empty-icon material-icons" aria-hidden="true">search</span>
           <h2>${escapeHtml(t("search_start_title", {}, "Start Searching"))}</h2>
           <p>${escapeHtml(
-            this.layoutPrefs?.searchDiscoverEnabled
+            this.layoutPrefs?.discoverLocation === "in_search"
               ? t("search_start_subtitle", {}, "Enter at least 2 characters")
               : t(
                   "search_start_subtitle_no_discover",
@@ -825,9 +855,9 @@ export const SearchScreen = {
           pillIconOnly: Boolean(this.pillIconOnly)
         })}
         <main class="home-main search-content">
-          <section class="search-header${this.layoutPrefs?.searchDiscoverEnabled ? "" : " no-discover"}">
+          <section class="search-header${this.layoutPrefs?.discoverLocation === "in_search" ? "" : " no-discover"}">
             ${
-              this.layoutPrefs?.searchDiscoverEnabled
+              this.layoutPrefs?.discoverLocation === "in_search"
                 ? `
               <button class="search-discover-btn focusable" data-action="openDiscover">
                 <span class="search-action-icon material-icons" aria-hidden="true">explore</span>
@@ -1707,7 +1737,7 @@ export const SearchScreen = {
 
     if (action === "openDetail") this.openDetailFromNode(node);
     if (action === "openCatalogSeeAll") this.openCatalogSeeAllFromNode(node);
-    if (action === "openDiscover" && this.layoutPrefs?.searchDiscoverEnabled)
+    if (action === "openDiscover" && this.layoutPrefs?.discoverLocation === "in_search")
       Router.navigate("discover");
     if (action === "openVoice") this.handleVoiceSearch();
   },

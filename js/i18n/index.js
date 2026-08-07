@@ -173,6 +173,8 @@ const KEY_ALIASES = {
   "settings.integration.mdblist.letterboxd.title": "mdblist_letterboxd_title",
   "settings.integration.mdblist.metacritic.subtitle": "mdblist_metacritic_subtitle",
   "settings.integration.mdblist.metacritic.title": "mdblist_metacritic_title",
+  "settings.integration.mdblist.mal.subtitle": "mdblist_mal_subtitle",
+  "settings.integration.mdblist.mal.title": "mdblist_mal_title",
   "settings.integration.mdblist.subtitle": "settings_mdblist_subtitle",
   "settings.integration.mdblist.tmdb.subtitle": "mdblist_tmdb_subtitle",
   "settings.integration.mdblist.tmdb.title": "mdblist_tmdb_title",
@@ -369,7 +371,18 @@ const KEY_ALIASES = {
   "auth.signIn.passwordPrompt": "debug_password_placeholder",
   "auth.signIn.title": "auth_signin_title",
   "auth.syncCode.back": "auth_qr_back",
-  "auth.syncCode.title": "account_sync_code_title"
+  "auth.syncCode.title": "account_sync_code_title",
+  "common.close": "action_close",
+  "settings.tracking.openSettings": "settings_tracking_title",
+  "settings.tracking.openSettingsSubtitle": "settings_tracking_description",
+  "layout_hero_catalog": "layout_hero_catalogs",
+  "layout_hero_catalog_sub": "layout_hero_catalogs_sub",
+  "tracking_more_like_this_source": "trakt_more_like_this_source_title",
+  "tracking_more_like_this_source_subtitle": "trakt_more_like_this_source_subtitle",
+  "trakt_connect": "trakt_login",
+  "trakt_days": "trakt_days_format",
+  "trakt_generate_code": "sync_generate_code_btn",
+  "trakt_watch_progress_source_title": "trakt_watch_progress_title"
 };
 
 const warnedKeys = new Set();

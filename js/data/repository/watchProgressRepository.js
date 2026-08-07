@@ -9,6 +9,8 @@ import {
 } from "../local/traktSettingsStore.js";
 import { TraktAuthStore } from "../local/traktAuthStore.js";
 import { TraktAuthService } from "./traktAuthService.js";
+import { SimklAuthStore } from "../local/simklAuthStore.js";
+import { SimklSyncService } from "./simklSyncService.js";
 import { metaRepository } from "./metaRepository.js";
 import { mapWithConcurrency } from "../../core/network/mapWithConcurrency.js";
 import {
@@ -152,6 +154,12 @@ function isTraktProgressItem(item = {}) {
     .startsWith("trakt");
 }
 
+function isSimklProgressItem(item = {}) {
+  return String(item.source || "")
+    .toLowerCase()
+    .startsWith("simkl");
+}
+
 function isTraktCompatibleContentId(contentId) {
   const raw = String(contentId || "").trim();
   if (!raw) {
@@ -169,27 +177,41 @@ function isTraktCompatibleContentId(contentId) {
 function selectedContinueWatchingSource() {
   const settings = TraktSettingsStore.get();
   const requestedSource = settings.watchProgressSource || WatchProgressSource.TRAKT;
-  return requestedSource === WatchProgressSource.TRAKT && TraktAuthStore.isAuthenticated()
-    ? WatchProgressSource.TRAKT
-    : WatchProgressSource.NUVIO_SYNC;
+  if (requestedSource === WatchProgressSource.TRAKT && TraktAuthStore.isAuthenticated()) {
+    return WatchProgressSource.TRAKT;
+  }
+  if (requestedSource === WatchProgressSource.SIMKL && SimklAuthStore.isAuthenticated()) {
+    return WatchProgressSource.SIMKL;
+  }
+  return WatchProgressSource.NUVIO_SYNC;
 }
 
 function selectedLocalProgressSource() {
   // Playback is recorded locally even when Trakt owns Continue Watching.
   // Keep that fresh state in the selected source until Trakt catches up.
-  return selectedContinueWatchingSource() === WatchProgressSource.TRAKT
-    ? "trakt_local"
-    : WatchProgressSource.NUVIO_SYNC;
+  const source = selectedContinueWatchingSource();
+  if (source === WatchProgressSource.TRAKT) return "trakt_local";
+  if (source === WatchProgressSource.SIMKL) return "simkl_local";
+  return WatchProgressSource.NUVIO_SYNC;
 }
 
 function filterForSelectedContinueWatchingSource(items = []) {
-  const useTrakt = selectedContinueWatchingSource() === WatchProgressSource.TRAKT;
+  const source = selectedContinueWatchingSource();
   const all = Array.isArray(items) ? items : [];
-  return all.filter((item) =>
-    useTrakt
-      ? isTraktProgressItem(item) || !isTraktCompatibleContentId(item?.contentId)
-      : !isTraktProgressItem(item)
-  );
+  if (source === WatchProgressSource.TRAKT) {
+    return all.filter(
+      (item) => isTraktProgressItem(item) || !isTraktCompatibleContentId(item?.contentId)
+    );
+  }
+  if (source === WatchProgressSource.SIMKL) {
+    return all.filter(
+      (item) =>
+        isSimklProgressItem(item) ||
+        (!isTraktCompatibleContentId(item?.contentId) &&
+          !/^(tvdb|mal|anidb|anilist|kitsu|simkl):/i.test(String(item?.contentId || "")))
+    );
+  }
+  return all.filter((item) => !isTraktProgressItem(item) && !isSimklProgressItem(item));
 }
 
 function deduplicateInProgress(items = []) {
@@ -499,6 +521,16 @@ async function fetchTraktProgressSnapshot() {
   return traktProgressSnapshotInFlight;
 }
 
+async function fetchSimklProgressSnapshot() {
+  if (
+    selectedContinueWatchingSource() !== WatchProgressSource.SIMKL ||
+    !SimklAuthStore.isAuthenticated()
+  ) {
+    return { historyItems: [], playbackItems: [], watchedShowSeedItems: [] };
+  }
+  return SimklSyncService.getProgressSnapshot();
+}
+
 // Cache for enriched metadata (5-minute TTL)
 const enrichedMetaCache = new Map();
 const ENRICHED_META_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -563,8 +595,7 @@ class WatchProgressRepository {
     let sourceItems = filterForSelectedContinueWatchingSource(localItems);
 
     if (
-      selectedContinueWatchingSource() === WatchProgressSource.TRAKT &&
-      TraktAuthStore.isAuthenticated()
+      selectedContinueWatchingSource() !== WatchProgressSource.NUVIO_SYNC
     ) {
       sourceItems = await this.getRecent(300, { enrichMetadata: false }).catch((error) => {
         console.warn("[CW] Resume lookup failed", error);
@@ -593,6 +624,7 @@ class WatchProgressRepository {
   async getRecent(limit = 30, { enrichMetadata = true } = {}) {
     const now = Date.now();
     const useTraktProgress = selectedContinueWatchingSource() === WatchProgressSource.TRAKT;
+    const useSimklProgress = selectedContinueWatchingSource() === WatchProgressSource.SIMKL;
     const daysCap = normalizeTraktContinueWatchingDaysCap(
       TraktSettingsStore.get().continueWatchingDaysCap
     );
@@ -604,6 +636,11 @@ class WatchProgressRepository {
 
     if (useTraktProgress) {
       const snapshot = await fetchTraktProgressSnapshot();
+      traktHistoryItems = snapshot.historyItems;
+      playbackItems = snapshot.playbackItems;
+      watchedShowSeedItems = snapshot.watchedShowSeedItems;
+    } else if (useSimklProgress) {
+      const snapshot = await fetchSimklProgressSnapshot();
       traktHistoryItems = snapshot.historyItems;
       playbackItems = snapshot.playbackItems;
       watchedShowSeedItems = snapshot.watchedShowSeedItems;
@@ -634,10 +671,13 @@ class WatchProgressRepository {
 
   async getAllForContinueWatching() {
     const localItems = WatchProgressStore.listForProfile(activeProfileId());
-    if (selectedContinueWatchingSource() !== WatchProgressSource.TRAKT) {
+    if (selectedContinueWatchingSource() === WatchProgressSource.NUVIO_SYNC) {
       return filterForSelectedContinueWatchingSource(localItems);
     }
-    const snapshot = await fetchTraktProgressSnapshot();
+    const snapshot =
+      selectedContinueWatchingSource() === WatchProgressSource.TRAKT
+        ? await fetchTraktProgressSnapshot()
+        : await fetchSimklProgressSnapshot();
     return filterForSelectedContinueWatchingSource([
       ...localItems,
       ...snapshot.historyItems,

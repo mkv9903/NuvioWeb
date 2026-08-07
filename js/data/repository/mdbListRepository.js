@@ -12,7 +12,8 @@ const PROVIDERS = {
   LETTERBOXD: { key: "letterboxd", apiValue: "letterboxd", settingsKey: "showLetterboxd" },
   TOMATOES: { key: "tomatoes", apiValue: "tomatoes", settingsKey: "showTomatoes" },
   AUDIENCE: { key: "audience", apiValue: "audience", settingsKey: "showAudience" },
-  METACRITIC: { key: "metacritic", apiValue: "metacritic", settingsKey: "showMetacritic" }
+  METACRITIC: { key: "metacritic", apiValue: "metacritic", settingsKey: "showMetacritic" },
+  MAL: { key: "mal", apiValue: "mal", settingsKey: "showMal" }
 };
 
 const cache = new Map();
