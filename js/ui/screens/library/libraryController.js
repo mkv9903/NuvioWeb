@@ -201,7 +201,7 @@ function itemMatchesYear(item, year) {
 
 function buildFacets(allItems, state) {
   const listFiltered =
-    state.sourceMode === LibrarySourceMode.TRAKT && state.selectedListKey
+    state.sourceMode !== LibrarySourceMode.LOCAL && state.selectedListKey
       ? allItems.filter(
           (item) => Array.isArray(item.listKeys) && item.listKeys.includes(state.selectedListKey)
         )
@@ -244,7 +244,7 @@ function sortForState(items, state) {
   });
 
   const listFiltered =
-    state.sourceMode === LibrarySourceMode.TRAKT && state.selectedListKey
+    state.sourceMode !== LibrarySourceMode.LOCAL && state.selectedListKey
       ? typeFiltered.filter(
           (item) => Array.isArray(item.listKeys) && item.listKeys.includes(state.selectedListKey)
         )
@@ -457,7 +457,7 @@ export class LibraryController {
     }
 
     const nextSelectedListKey =
-      sourceMode === LibrarySourceMode.TRAKT
+      sourceMode !== LibrarySourceMode.LOCAL
         ? this.state.selectedListKey &&
           listTabs.some((item) => item.key === this.state.selectedListKey)
           ? this.state.selectedListKey
@@ -465,7 +465,7 @@ export class LibraryController {
         : null;
 
     const availableSortOptions =
-      sourceMode === LibrarySourceMode.TRAKT
+      sourceMode !== LibrarySourceMode.LOCAL
         ? LIBRARY_SORT_OPTIONS
         : LIBRARY_SORT_OPTIONS.filter((option) => option.key !== LibrarySortOptionKey.DEFAULT);
     const facets = buildFacets(allItems, {
@@ -493,7 +493,7 @@ export class LibraryController {
       (item) => item.key === this.state.selectedSortKey
     )
       ? this.state.selectedSortKey
-      : sourceMode === LibrarySourceMode.TRAKT
+      : sourceMode !== LibrarySourceMode.LOCAL
         ? LibrarySortOptionKey.DEFAULT
         : LibrarySortOptionKey.ADDED_DESC;
     const manageSelectedListKey =
@@ -521,6 +521,7 @@ export class LibraryController {
       manageSelectedListKey,
       isNuvioAccount: sourceMode === LibrarySourceMode.LOCAL && AuthManager.isAuthenticated,
       isTraktAuthenticated: sourceMode === LibrarySourceMode.TRAKT,
+      isSimklAuthenticated: sourceMode === LibrarySourceMode.SIMKL,
       watchedTitleIds: buildWatchedTitleIdSet(watchedItems),
       isLoading: false,
       isSyncing: false,
@@ -558,6 +559,9 @@ export class LibraryController {
   getSourceLabel() {
     if (this.state.sourceMode === LibrarySourceMode.TRAKT) {
       return t("library_source_trakt", {}, "TRAKT");
+    }
+    if (this.state.sourceMode === LibrarySourceMode.SIMKL) {
+      return "SIMKL";
     }
     if (this.state.isNuvioAccount) {
       return t("library_source_nuvio", {}, "NUVIO");
@@ -606,6 +610,9 @@ export class LibraryController {
         `No ${selectedTypeLabel} in this list`
       );
     }
+    if (this.state.sourceMode === LibrarySourceMode.SIMKL) {
+      return `No ${selectedTypeLabel} in this Simkl status`;
+    }
     return t("library_empty_local_title", [selectedTypeLabel], `No ${selectedTypeLabel} yet`);
   }
 
@@ -623,6 +630,9 @@ export class LibraryController {
         {},
         "Use + in details to add items to watchlist or lists"
       );
+    }
+    if (this.state.sourceMode === LibrarySourceMode.SIMKL) {
+      return "Use + in details to move items between Simkl statuses";
     }
     return t("library_empty_local_subtitle", {}, "Start saving your favorites to see them here");
   }

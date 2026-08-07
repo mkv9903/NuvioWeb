@@ -10,26 +10,36 @@ const KEY = "playerSettings";
 const DEFAULTS = {
   autoplayNextEpisode: false,
   subtitlesEnabled: true,
-  subtitleLanguage: "off",
+  subtitleLanguage: "en",
   secondarySubtitleLanguage: "off",
   preferredAudioLanguage: "system",
-  trailerAutoplay: false,
+  secondaryPreferredAudioLanguage: "none",
+  trailerAutoplay: true,
+  trailerDelaySeconds: 7,
   skipIntroEnabled: true,
+  loadingOverlayEnabled: true,
+  showPlayerLoadingStatus: true,
+  pauseOverlayEnabled: true,
+  parentalGuideEnabled: true,
+  autoSkipSegmentTypes: [],
+  addonSubtitleStartupMode: "ALL_SUBTITLES",
   nextEpisodeThresholdMode: "PERCENTAGE",
   nextEpisodeThresholdPercent: 99,
   nextEpisodeThresholdMinutesBeforeEnd: 2,
   stillWatchingEnabled: false,
   stillWatchingEpisodeThreshold: 3,
+  osdClockEnabled: true,
   subtitleRenderMode: "native",
   subtitleStyle: {
-    fontSize: 120,
+    fontSize: 100,
     textColor: "#FFFFFF",
     bold: false,
     outlineEnabled: true,
     outlineColor: "#000000",
+    backgroundColor: "#00000000",
     verticalOffset: SUBTITLE_VERTICAL_OFFSET_DEFAULT,
     verticalOffsetContract: SUBTITLE_VERTICAL_OFFSET_CONTRACT,
-    preferredLanguage: "off",
+    preferredLanguage: "en",
     secondaryPreferredLanguage: "off",
     useForcedSubtitles: false,
     showOnlyPreferredLanguages: false
@@ -237,6 +247,30 @@ export function normalizePlayerSettings(settings = {}) {
   return {
     ...DEFAULTS,
     ...persistentSettings,
+    trailerAutoplay: persistentSettings.trailerAutoplay ?? DEFAULTS.trailerAutoplay,
+    trailerDelaySeconds: Math.min(
+      15,
+      Math.max(0, Math.trunc(Number(persistentSettings.trailerDelaySeconds ?? 7)) || 0)
+    ),
+    loadingOverlayEnabled: persistentSettings.loadingOverlayEnabled !== false,
+    showPlayerLoadingStatus: persistentSettings.showPlayerLoadingStatus !== false,
+    pauseOverlayEnabled: persistentSettings.pauseOverlayEnabled !== false,
+    parentalGuideEnabled: persistentSettings.parentalGuideEnabled !== false,
+    autoSkipSegmentTypes: [
+      ...new Set(
+        (Array.isArray(persistentSettings.autoSkipSegmentTypes)
+          ? persistentSettings.autoSkipSegmentTypes
+          : []
+        )
+          .map((entry) => String(entry).toLowerCase())
+          .filter((entry) => ["intro", "recap", "outro"].includes(entry))
+      )
+    ],
+    addonSubtitleStartupMode: ["FAST_STARTUP", "PREFERRED_ONLY", "ALL_SUBTITLES"].includes(
+      String(persistentSettings.addonSubtitleStartupMode || "").toUpperCase()
+    )
+      ? String(persistentSettings.addonSubtitleStartupMode).toUpperCase()
+      : "ALL_SUBTITLES",
     streamAutoPlayMode: normalizeStreamAutoPlayMode(
       persistentSettings.streamAutoPlayMode ?? DEFAULTS.streamAutoPlayMode
     ),
@@ -286,7 +320,19 @@ export function normalizePlayerSettings(settings = {}) {
     stillWatchingEpisodeThreshold: normalizeStillWatchingThreshold(
       settings.stillWatchingEpisodeThreshold ?? DEFAULTS.stillWatchingEpisodeThreshold
     ),
+    osdClockEnabled: Boolean(persistentSettings.osdClockEnabled ?? DEFAULTS.osdClockEnabled),
     subtitlesEnabled,
+    secondaryPreferredAudioLanguage: (() => {
+      const normalized = String(
+        persistentSettings.secondaryPreferredAudioLanguage ??
+          DEFAULTS.secondaryPreferredAudioLanguage
+      )
+        .trim()
+        .toLowerCase();
+      return !normalized || ["default", "device", "forced", "off"].includes(normalized)
+        ? "none"
+        : normalized;
+    })(),
     subtitleLanguage: preferredLanguage,
     secondarySubtitleLanguage: secondaryPreferredLanguage,
     subtitleStyle: {

@@ -1274,7 +1274,7 @@ export const LibraryScreen = {
 
   handleContentRowMemoryNavigation(event, current) {
     const state = this.controller.state;
-    if (state.sourceMode !== "trakt" || state.expandedPicker || !current) {
+    if (state.sourceMode === "local" || state.expandedPicker || !current) {
       return false;
     }
     const code = Number(event?.keyCode || 0);

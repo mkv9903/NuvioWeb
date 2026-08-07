@@ -46,7 +46,7 @@ import { Environment } from "../../../platform/environment.js";
 import { Router } from "../../navigation/router.js";
 import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 import { DirectDebridResolver } from "../../../core/debrid/directDebridResolver.js";
-import { TraktScrobbleService } from "../../../data/repository/traktScrobbleService.js";
+import { TrackingScrobbleService } from "../../../data/repository/trackingScrobbleService.js";
 import { WebOsEngineFsResolver } from "../../../core/p2p/webosEngineFsResolver.js";
 import { TizenStreamingServerResolver } from "../../../core/p2p/tizenStreamingServerResolver.js";
 import { TizenEngineFsService } from "../../../platform/tizen/tizenEngineFsService.js";
@@ -54,6 +54,7 @@ import {
   requestWebOsCompanionService,
   subscribeWebOsCompanionService
 } from "../../../platform/webos/webosCompanionService.js";
+import { WebOsLunaService } from "../../../platform/webos/webosLunaService.js";
 import { StreamPreferencesStore } from "../../../data/local/streamPreferencesStore.js";
 import { buildStreamResumeIdentity } from "../../../core/streams/streamResumeIdentity.js";
 import { TrackPreferencesStore } from "../../../data/local/trackPreferencesStore.js";
@@ -1256,10 +1257,11 @@ function formatTime(secondsValue) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function formatClock(date = new Date()) {
+function formatClock(date = new Date(), webOsLocaleInfo = null) {
   const locale = typeof I18n.getLocale === "function" ? I18n.getLocale() : undefined;
   const hour12 = resolveSystemHour12({
     tizenApi: typeof tizen !== "undefined" ? tizen : null,
+    webOsLocaleInfo,
     intlApi: typeof Intl !== "undefined" ? Intl : null
   });
   const localeKey = `${String(locale || "__default__")}:${String(hour12)}`;
@@ -1282,7 +1284,7 @@ function formatClock(date = new Date()) {
   }
 }
 
-function formatEndsAt(currentSeconds, durationSeconds) {
+function formatEndsAt(currentSeconds, durationSeconds, webOsLocaleInfo = null) {
   const current = Number(currentSeconds || 0);
   const duration = Number(durationSeconds || 0);
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -1290,7 +1292,7 @@ function formatEndsAt(currentSeconds, durationSeconds) {
   }
   const remainingMs = Math.max(0, (duration - current) * 1000);
   const endDate = new Date(Date.now() + remainingMs);
-  return formatClock(endDate);
+  return formatClock(endDate, webOsLocaleInfo);
 }
 
 function clamp(value, min, max) {
@@ -2163,6 +2165,37 @@ export const PlayerScreen = {
     const mountToken = Number(this.playerMountToken || 0) + 1;
     this.playerMountToken = mountToken;
     this.playerRouteActive = true;
+    this.webOsClockLocaleInfo = null;
+    this.webOsClockSettingsSubscription?.cancel?.();
+    this.webOsClockSettingsSubscription = null;
+    if (Environment.isWebOS() && WebOsLunaService.isAvailable()) {
+      try {
+        this.webOsClockSettingsSubscription = WebOsLunaService.subscribe(
+          "luna://com.webos.settingsservice",
+          {
+            method: "getSystemSettings",
+            parameters: { keys: ["localeInfo"] },
+            onSuccess: (result) => {
+              if (!this.playerRouteActive || this.playerMountToken !== mountToken) {
+                return;
+              }
+              const localeInfo = result?.settings?.localeInfo;
+              if (!localeInfo || typeof localeInfo !== "object") {
+                return;
+              }
+              this.webOsClockLocaleInfo = localeInfo;
+              if (this.lastUiTickState) {
+                this.lastUiTickState.clockMinuteKey = null;
+                this.lastUiTickState.endsAtMinuteBucket = null;
+              }
+              this.updateUiTick();
+            }
+          }
+        );
+      } catch (_) {
+        this.webOsClockSettingsSubscription = null;
+      }
+    }
     this.params = params;
     this.trackPreferenceContentId = this.getTrackPreferenceContentId();
     this.rememberedAudioTrackPreference = TrackPreferencesStore.getAudio(
@@ -2914,6 +2947,7 @@ export const PlayerScreen = {
     const progress = durationSec > 0 ? Math.min(100, (currentSec / durationSec) * 100) : 0;
     return {
       contentId: String(this.params?.itemId || identity.imdbId || ""),
+      videoId: String(this.params?.videoId || this.params?.playerVideoId || ""),
       contentType: identity.itemType === "series" ? "series" : "movie",
       imdbId: identity.imdbId,
       tmdbId: identity.tmdbId || null,
@@ -2939,6 +2973,7 @@ export const PlayerScreen = {
 
   maybeShowParentalGuideOverlay() {
     if (
+      PlayerSettingsStore.get().parentalGuideEnabled === false ||
       this.parentalGuideShown ||
       !this.parentalWarnings.length ||
       this.paused ||
@@ -3069,6 +3104,18 @@ export const PlayerScreen = {
     }
     this.activeSkipInterval = active;
     if (previousKey !== nextKey) {
+      const intervalType = String(active?.type || "")
+        .trim()
+        .toLowerCase();
+      const autoSkipType = ["outro", "ed", "mixed-ed"].includes(intervalType)
+        ? "outro"
+        : intervalType === "recap"
+          ? "recap"
+          : "intro";
+      if (active && PlayerSettingsStore.get().autoSkipSegmentTypes?.includes(autoSkipType)) {
+        this.skipActiveInterval();
+        return;
+      }
       this.renderSkipIntroButton();
       this.updateSkipIntroCountdown(Date.now());
     }
@@ -4936,6 +4983,7 @@ export const PlayerScreen = {
     } else {
       const header = this.getPlayerHeaderData();
       const loadingMeta = this.getLoadingOverlayMeta();
+      const osdClockEnabled = Boolean(PlayerSettingsStore.get().osdClockEnabled);
       root.innerHTML = `
         <div id="playerLoadingOverlay" class="player-loading-overlay">
           <div class="player-loading-backdrop"${loadingMeta.backdropUrl ? ` style="background-image:url('${loadingMeta.backdropUrl}')"` : ""}></div>
@@ -5006,7 +5054,7 @@ export const PlayerScreen = {
           <div class="player-controls-gradient player-controls-gradient-top"></div>
           <div class="player-controls-gradient player-controls-gradient-bottom"></div>
 
-          <div class="player-controls-top">
+          <div class="player-controls-top${osdClockEnabled ? "" : " hidden"}">
             <div id="playerClock" class="player-clock">--:--</div>
             <div id="playerEndsAt" class="player-ends-at">${escapeHtml(t("player_ends_at", ["--:--"], "Ends at %1$s"))}</div>
           </div>
@@ -5322,7 +5370,8 @@ export const PlayerScreen = {
     const bufferingStatus = this.uiRefs?.bufferingStatus;
     const subtitle = this.uiRefs?.loadingSubtitle;
     const statusText = String(this.loadingTorrentStatus || "").trim();
-    const hasStatus = Boolean(statusText);
+    const hasStatus =
+      Boolean(statusText) && PlayerSettingsStore.get().showPlayerLoadingStatus !== false;
     const hasSubtitle = Boolean(subtitle?.textContent?.trim());
     if (loadingStatus) {
       loadingStatus.textContent = statusText;
@@ -6236,6 +6285,7 @@ export const PlayerScreen = {
 
   canShowPauseOverlay() {
     return (
+      PlayerSettingsStore.get().pauseOverlayEnabled !== false &&
       !this.isExternalFrameMode() &&
       this.paused &&
       !this.loadingVisible &&
@@ -7634,6 +7684,10 @@ export const PlayerScreen = {
       PlayerController.setAvPlayExternalSubtitleDelay?.(this.subtitleDelayMs);
     }
     uiRoot.style.setProperty("--player-subtitle-color", String(style.textColor || "#FFFFFF"));
+    uiRoot.style.setProperty(
+      "--player-subtitle-background",
+      String(style.backgroundColor || "#00000000")
+    );
     uiRoot.style.setProperty("--player-subtitle-outline-color", outlineColor);
     uiRoot.style.setProperty("--player-subtitle-font-size", `${subtitleFontSize}%`);
     uiRoot.style.setProperty("--player-html-subtitle-font-size", htmlSubtitleFontSize);
@@ -7644,6 +7698,10 @@ export const PlayerScreen = {
       `${(verticalOffset.value * -2).toFixed(2)}vh`
     );
     video.style.setProperty("--player-subtitle-color", String(style.textColor || "#FFFFFF"));
+    video.style.setProperty(
+      "--player-subtitle-background",
+      String(style.backgroundColor || "#00000000")
+    );
     video.style.setProperty("--player-subtitle-outline-color", outlineColor);
     video.style.setProperty("--player-subtitle-font-size", `${subtitleFontSize}%`);
     video.style.setProperty("--player-subtitle-font-weight", subtitleFontWeight);
@@ -8340,8 +8398,8 @@ export const PlayerScreen = {
         return;
       }
       // Fire-and-forget scrobble start (debounced internally)
-      if (TraktScrobbleService.isEnabled()) {
-        TraktScrobbleService.start(this.buildScrobbleContext());
+      if (TrackingScrobbleService.isEnabled()) {
+        TrackingScrobbleService.start(this.buildScrobbleContext());
       }
       this.lastPlaybackErrorAt = 0;
       this.sourcesError = "";
@@ -8385,8 +8443,8 @@ export const PlayerScreen = {
         return;
       }
       // Immediate scrobble pause
-      if (TraktScrobbleService.isEnabled()) {
-        TraktScrobbleService.pause(this.buildScrobbleContext());
+      if (TrackingScrobbleService.isEnabled()) {
+        TrackingScrobbleService.pause(this.buildScrobbleContext());
       }
       this.clearPlaybackStallGuard();
       this.paused = true;
@@ -8756,13 +8814,10 @@ export const PlayerScreen = {
           }
         );
       }
-      if (this.currentEngineFsStream) {
-        this.renderSourcesPanel();
-      } else if (this.streamCandidates.length > 1) {
-        this.openSourcesPanel();
-      } else {
-        this.renderSourcesPanel();
-      }
+      // Keep source switching user-initiated after an in-playback failure. Opening
+      // the panel here steals focus from the player (notably on webOS) and differs
+      // from Android TV, where fatal playback errors do not open Sources.
+      this.renderSourcesPanel();
 
       console.warn("Playback failed", {
         url: this.activePlaybackUrl,
@@ -8877,13 +8932,18 @@ export const PlayerScreen = {
     }
 
     const playbackSpeed = this.getPlaybackSpeed();
+    const playbackSpeedOptions = this.getPlaybackSpeedOptions();
     return [
       ...base.slice(0, Math.max(0, base.length - 1)),
-      {
-        action: "speed",
-        label: `${playbackSpeed.toFixed(playbackSpeed % 1 ? 2 : 0)}x`,
-        title: t("player_playback_speed", {}, "Playback speed")
-      },
+      ...(playbackSpeedOptions.length > 1
+        ? [
+            {
+              action: "speed",
+              label: `${playbackSpeed.toFixed(playbackSpeed % 1 ? 2 : 0)}x`,
+              title: t("player_playback_speed", {}, "Playback speed")
+            }
+          ]
+        : []),
       {
         action: "aspect",
         icon: "assets/icons/ic_player_aspect_ratio.svg",
@@ -9704,7 +9764,8 @@ export const PlayerScreen = {
       this.clearBufferingSpinnerTimer();
       return;
     }
-    const showStartupOverlay = this.isStartupLoadingVisible();
+    const showStartupOverlay =
+      this.isStartupLoadingVisible() && PlayerSettingsStore.get().loadingOverlayEnabled !== false;
     const showBufferingSpinner = this.isBufferingSpinnerVisible();
     const preserveProgressFocus = Boolean(
       showStartupOverlay &&
@@ -9875,7 +9936,7 @@ export const PlayerScreen = {
       const now = new Date();
       const nextClockMinuteKey = `${now.getHours()}:${now.getMinutes()}`;
       if (uiState.clockMinuteKey !== nextClockMinuteKey) {
-        const nextClockText = formatClock(now);
+        const nextClockText = formatClock(now, this.webOsClockLocaleInfo);
         clock.textContent = nextClockText;
         uiState.clockText = nextClockText;
         uiState.clockMinuteKey = nextClockMinuteKey;
@@ -9890,7 +9951,7 @@ export const PlayerScreen = {
       if (uiState.endsAtMinuteBucket !== nextEndsAtMinuteBucket) {
         const nextEndsAtText = t(
           "player_ends_at",
-          [formatEndsAt(current, duration)],
+          [formatEndsAt(current, duration, this.webOsClockLocaleInfo)],
           "Ends at %1$s"
         );
         endsAt.textContent = nextEndsAtText;
@@ -13864,29 +13925,30 @@ export const PlayerScreen = {
 
   getStartupPreferredAudioLanguageTargets() {
     const settings = PlayerSettingsStore.get();
-    const configured = String(settings.preferredAudioLanguage || "system")
+    const primary = String(settings.preferredAudioLanguage || "system")
       .trim()
       .toLowerCase();
-    if (!configured || configured === "off" || configured === "none") {
-      return [];
-    }
-
-    if (configured === "system") {
-      const systemLanguage = this.getStartupSystemAudioLanguageTarget();
-      return systemLanguage ? [systemLanguage] : [];
-    }
-
-    if (configured === "original") {
-      const originalLanguage = normalizeTrackLanguageCode(this.contentLanguage);
-      if (originalLanguage) {
-        return [originalLanguage];
+    const secondary = String(settings.secondaryPreferredAudioLanguage || "none")
+      .trim()
+      .toLowerCase();
+    const originalLanguage = normalizeTrackLanguageCode(this.contentLanguage);
+    const systemLanguage = this.getStartupSystemAudioLanguageTarget();
+    const resolve = (configured, { primaryPreference = false } = {}) => {
+      if (!configured || ["default", "off", "none", "forced"].includes(configured)) {
+        return "";
       }
-      const systemLanguage = this.getStartupSystemAudioLanguageTarget();
-      return systemLanguage ? [systemLanguage] : [];
-    }
+      if (configured === "system" || configured === "device") {
+        return primaryPreference ? systemLanguage : "";
+      }
+      if (configured === "original") {
+        return originalLanguage || (primaryPreference ? systemLanguage : "");
+      }
+      return normalizeTrackLanguageCode(configured);
+    };
 
-    const normalized = normalizeTrackLanguageCode(configured);
-    return normalized ? [normalized] : [];
+    return Array.from(
+      new Set([resolve(primary, { primaryPreference: true }), resolve(secondary)].filter(Boolean))
+    );
   },
 
   getStartupSystemAudioLanguageTarget() {
@@ -17783,6 +17845,16 @@ export const PlayerScreen = {
         return;
       }
 
+      if (PlayerSettingsStore.get().addonSubtitleStartupMode === "PREFERRED_ONLY") {
+        const preferredTargets = new Set(this.getStartupPreferredSubtitleLanguageTargets());
+        repositorySubtitles = repositorySubtitles.filter((entry) => {
+          const language = normalizeSubtitleLanguageKey(
+            entry?.lang || entry?.language || entry?.languageCode || ""
+          );
+          return preferredTargets.has(language) || Boolean(entry?.forced);
+        });
+      }
+
       this.subtitles = this.mergeSubtitleCandidates(sidecarSubtitles, repositorySubtitles);
       if (this.subtitleDialogVisible && this.subtitleDialogTab === "builtIn") {
         const builtInBoundary = this.resolveBuiltInSubtitleBoundary(this.getTextTracks());
@@ -18839,8 +18911,8 @@ export const PlayerScreen = {
 
   async handlePlaybackEnded() {
     // Immediate scrobble stop (may trigger mark-as-watched)
-    if (TraktScrobbleService.isEnabled()) {
-      TraktScrobbleService.stop(this.buildScrobbleContext());
+    if (TrackingScrobbleService.isEnabled()) {
+      TrackingScrobbleService.stop(this.buildScrobbleContext());
     }
     this.clearPlaybackStallGuard();
     this.releaseStartupAudioGate({ resume: false });
@@ -18902,7 +18974,7 @@ export const PlayerScreen = {
         PlayerController.video.removeEventListener("ended", this.endedHandler);
         this.endedHandler = null;
       }
-      TraktScrobbleService.cancel();
+      TrackingScrobbleService.cancel();
       this.unbindPlayerExitCleanup();
       this.releaseCurrentEngineFsStreamBestEffort("player-cleanup", {
         removeTorrent: true,
@@ -18934,6 +19006,9 @@ export const PlayerScreen = {
         this.releaseImageProxyReadyListener();
         this.releaseImageProxyReadyListener = null;
       }
+      this.webOsClockSettingsSubscription?.cancel?.();
+      this.webOsClockSettingsSubscription = null;
+      this.webOsClockLocaleInfo = null;
       if (this.sourceLogoRenderTimer) {
         clearTimeout(this.sourceLogoRenderTimer);
         this.sourceLogoRenderTimer = null;

@@ -15,8 +15,14 @@ import { normalizeEpisodeImdbRating, parseEpisodeRuntimeMinutes } from "./episod
 import { mdbListRepository } from "../../../data/repository/mdbListRepository.js";
 import { TmdbSettingsStore } from "../../../data/local/tmdbSettingsStore.js";
 import { PlayerSettingsStore } from "../../../data/local/playerSettingsStore.js";
-import { TraktSettingsStore } from "../../../data/local/traktSettingsStore.js";
-import { TraktAuthService } from "../../../data/repository/traktAuthService.js";
+import {
+  MoreLikeThisSourcePreference,
+  TraktSettingsStore
+} from "../../../data/local/traktSettingsStore.js";
+import {
+  requestJson as traktRequestJson,
+  TraktAuthService
+} from "../../../data/repository/traktAuthService.js";
 import { Environment } from "../../../platform/environment.js";
 import { Platform } from "../../../platform/index.js";
 import {
@@ -281,12 +287,11 @@ function isSeriesDetailMeta(meta = {}, episodes = null) {
   if (normalizedType === "series") {
     return true;
   }
-  if (normalizedType !== "tv") {
-    return false;
-  }
   const resolvedEpisodes = Array.isArray(episodes)
     ? episodes
     : normalizeEpisodes(meta?.videos || []);
+  // Match Android TV: addon-defined types such as `other` are episodic when
+  // their full meta contains valid season/episode videos.
   return resolvedEpisodes.length > 0;
 }
 
@@ -712,6 +717,9 @@ function formatMovieReleaseDate(meta = {}) {
       ? new Date(`${rawDate}T00:00:00`)
       : new Date(rawDate);
     if (!Number.isNaN(parsed.getTime())) {
+      if (LayoutPreferences.get().showFullReleaseDate === false) {
+        return String(parsed.getFullYear());
+      }
       return new Intl.DateTimeFormat(undefined, {
         month: "long",
         day: "numeric",
@@ -910,6 +918,43 @@ function normalizePreviewItem(item = {}, fallbackType = "movie") {
     landscapePoster: item.landscapePoster || item.background || item.poster || "",
     releaseInfo: item.releaseInfo || item.year || ""
   };
+}
+
+function bestTraktArtwork(images = {}, kind) {
+  const candidates = images?.[kind];
+  if (Array.isArray(candidates)) {
+    return candidates.find((entry) => typeof entry === "string" && entry) || "";
+  }
+  if (typeof candidates === "string") return candidates;
+  if (candidates && typeof candidates === "object") {
+    return candidates.full || candidates.medium || candidates.thumb || "";
+  }
+  return "";
+}
+
+function traktRelatedPreview(media = {}, type = "movie") {
+  const ids = media.ids || {};
+  const id = ids.imdb
+    ? String(ids.imdb)
+    : ids.tmdb != null
+      ? `tmdb:${ids.tmdb}`
+      : ids.trakt != null
+        ? `trakt:${ids.trakt}`
+        : "";
+  if (!id || !(media.title || media.original_title)) return null;
+  const landscape = bestTraktArtwork(media.images, "fanart");
+  const poster = bestTraktArtwork(media.images, "poster");
+  return normalizePreviewItem(
+    {
+      id,
+      name: media.title || media.original_title,
+      type,
+      poster: landscape || poster,
+      landscapePoster: landscape || poster,
+      releaseInfo: media.year == null ? "" : String(media.year)
+    },
+    type
+  );
 }
 
 function normalizeEpisodeTitle(rawTitle, episodeNumber) {
@@ -1306,6 +1351,7 @@ export const MetaDetailsScreen = {
       episodes: Array.isArray(this.episodes) ? [...this.episodes] : [],
       castItems: Array.isArray(this.castItems) ? [...this.castItems] : [],
       moreLikeThisItems: Array.isArray(this.moreLikeThisItems) ? [...this.moreLikeThisItems] : [],
+      moreLikeThisSource: this.moreLikeThisSource || null,
       collectionItems: Array.isArray(this.collectionItems) ? [...this.collectionItems] : [],
       commentsItems: Array.isArray(this.commentsItems) ? [...this.commentsItems] : [],
       collectionName: String(this.collectionName || ""),
@@ -1346,6 +1392,7 @@ export const MetaDetailsScreen = {
     this.moreLikeThisItems = Array.isArray(snapshot.moreLikeThisItems)
       ? [...snapshot.moreLikeThisItems]
       : [];
+    this.moreLikeThisSource = snapshot.moreLikeThisSource || null;
     this.collectionItems = Array.isArray(snapshot.collectionItems)
       ? [...snapshot.collectionItems]
       : [];
@@ -1687,7 +1734,7 @@ export const MetaDetailsScreen = {
 
     const loadMeta = async () => {
       const globalResultPromise = metaRepository.getMetaFromAllAddons(itemType, itemId);
-      if (sourceAddonBaseUrl) {
+      if (sourceAddonBaseUrl && LayoutPreferences.get().preferExternalMetaAddonDetail !== false) {
         const sourceResult = await withTimeout(
           metaRepository.getMeta(sourceAddonBaseUrl, sourceItemType, sourceItemId),
           1800,
@@ -1800,6 +1847,7 @@ export const MetaDetailsScreen = {
     );
     this.selectedRatingSeason = this.selectedRatingSeason || this.selectedSeason || 1;
     this.moreLikeThisItems = [];
+    this.moreLikeThisSource = null;
     this.collectionItems = [];
     this.collectionName = "";
     this.streamItems = [];
@@ -1945,10 +1993,20 @@ export const MetaDetailsScreen = {
 
   async fetchMoreLikeThis(meta) {
     try {
+      const trackingSettings = TraktSettingsStore.get();
+      if (
+        TraktAuthService.isAuthenticated() &&
+        trackingSettings.moreLikeThisSource !== MoreLikeThisSourcePreference.TMDB
+      ) {
+        this.moreLikeThisSource = "trakt";
+        return await this.fetchTraktRelated(meta);
+      }
       const settings = TmdbSettingsStore.get();
       if (!settings.enabled || !settings.useMoreLikeThis) {
+        this.moreLikeThisSource = null;
         return [];
       }
+      this.moreLikeThisSource = "tmdb";
       // Android resolves the route type first, then the meta type, and treats
       // both `tv` and `series` as TMDB TV content even when episodes are absent.
       const routeType = String(this.params?.itemType || "").toLowerCase();
@@ -1979,8 +2037,59 @@ export const MetaDetailsScreen = {
         .slice(0, 12);
     } catch (error) {
       console.warn("More like this load failed", error);
+      this.moreLikeThisSource = null;
       return [];
     }
+  },
+
+  async fetchTraktRelated(meta) {
+    const routeType = String(this.params?.itemType || meta?.type || meta?.apiType || "")
+      .trim()
+      .toLowerCase();
+    const type = ["series", "tv", "show", "tvshow"].includes(routeType) ? "series" : "movie";
+    const apiType = type === "series" ? "show" : "movie";
+    const token = await TraktAuthService.getValidAccessToken();
+    if (!token) return [];
+
+    const rawIds = [meta?.id, this.params?.itemId].map((value) => String(value || "").trim());
+    const directImdb = resolveMetaImdbId(meta, this.params);
+    const directTrakt = rawIds
+      .map((value) => value.match(/^trakt:(.+)$/i)?.[1] || null)
+      .find(Boolean);
+    let pathId = directImdb || directTrakt || String(meta?.slug || "").trim();
+    if (!pathId) {
+      const tmdbId =
+        meta?.tmdbId ||
+        rawIds.map((value) => value.match(/^tmdb:(\d+)$/i)?.[1] || null).find(Boolean);
+      if (tmdbId) {
+        const search = await traktRequestJson(
+          `/search/tmdb/${encodeURIComponent(String(tmdbId))}?type=${apiType}`,
+          { authorization: `Bearer ${token}` }
+        );
+        if (search.response.ok) {
+          const result = (Array.isArray(search.payload) ? search.payload : []).find(
+            (entry) => String(entry?.type || "").toLowerCase() === apiType
+          );
+          const ids = (type === "series" ? result?.show : result?.movie)?.ids || {};
+          pathId = ids.imdb || ids.trakt || ids.slug || "";
+        }
+      }
+    }
+    if (!pathId) return [];
+
+    const target = type === "series" ? "shows" : "movies";
+    const result = await traktRequestJson(
+      `/${target}/${encodeURIComponent(String(pathId))}/related?extended=full%2Cimages&page=1&limit=20`,
+      { authorization: `Bearer ${token}` }
+    );
+    if (result.response.status === 404) return [];
+    if (!result.response.ok) {
+      throw new Error(`Trakt related titles failed (${result.response.status})`);
+    }
+    return (Array.isArray(result.payload) ? result.payload : [])
+      .map((item) => traktRelatedPreview(item, type))
+      .filter((item) => item?.id && item.id !== String(meta?.id || ""))
+      .slice(0, 20);
   },
 
   getAvailableSeasons(episodes = this.episodes) {
@@ -2341,6 +2450,26 @@ export const MetaDetailsScreen = {
       ) {
         watchedKeys.add(`${season}:${episode}`);
       }
+    });
+
+    const animeWatchedKeys = new Set(
+      (Array.isArray(watchedItems) ? watchedItems : [])
+        .filter((entry) => entry?.episode != null)
+        .map(
+          (entry) => `${String(entry.contentId || "").toLowerCase()}:${Number(entry.episode || 0)}`
+        )
+    );
+    (this.episodes || []).forEach((video) => {
+      const match = String(video?.id || "").match(/^(mal|anidb|anilist|kitsu):(\d+):(\d+)/i);
+      if (
+        !match ||
+        !animeWatchedKeys.has(`${match[1].toLowerCase()}:${match[2]}:${Number(match[3])}`)
+      ) {
+        return;
+      }
+      const season = Number(video?.season || 0);
+      const episode = Number(video?.episode || 0);
+      if (season >= 0 && episode > 0) watchedKeys.add(`${season}:${episode}`);
     });
 
     this.episodeProgressMap = progressMap;
@@ -3425,6 +3554,7 @@ export const MetaDetailsScreen = {
         <section class="series-insight-section">
           ${tabs}
           ${this.renderPreviewRail(this.moreLikeThisItems, "movie", "morelike:movie")}
+          ${this.renderMoreLikeThisAttribution()}
         </section>
       `;
     }
@@ -3466,13 +3596,19 @@ export const MetaDetailsScreen = {
             : this.seriesInsightTab === "collection"
               ? this.renderPreviewRail(this.collectionItems, "series", "collection:series")
               : this.seriesInsightTab === "morelike"
-                ? this.renderPreviewRail(this.moreLikeThisItems, "series", "morelike:series")
+                ? `${this.renderPreviewRail(this.moreLikeThisItems, "series", "morelike:series")}${this.renderMoreLikeThisAttribution()}`
                 : this.seriesInsightTab === "trailer"
                   ? this.renderTrailerRail(trailerItems, "series")
                   : this.renderSeriesCastTrack("series")
         }
       </section>
     `;
+  },
+
+  renderMoreLikeThisAttribution() {
+    if (!this.moreLikeThisSource) return "";
+    const provider = this.moreLikeThisSource === "trakt" ? "Trakt" : "TMDB";
+    return `<p class="detail-more-like-source">Related titles provided by ${provider}.</p>`;
   },
 
   renderPeopleTabs(kind, activeTab, items = []) {
@@ -4218,8 +4354,12 @@ export const MetaDetailsScreen = {
         className: "poster-list-picker-list-button"
       })),
       {
-        action: "saveLibraryLists",
-        label: t("action_save", {}, "Save"),
+        action: this.libraryListMenu.destructiveRemovalRequired
+          ? "confirmDestructiveSimklRemoval"
+          : "saveLibraryLists",
+        label: this.libraryListMenu.destructiveRemovalRequired
+          ? "Remove status and clear Simkl history"
+          : t("action_save", {}, "Save"),
         className: "poster-list-picker-save-button"
       }
     ];
@@ -4550,13 +4690,14 @@ export const MetaDetailsScreen = {
     const tabs = await libraryRepository.getListTabs().catch(() => []);
     const resolvedTabs =
       Array.isArray(tabs) && tabs.length
-        ? tabs
+        ? tabs.filter((tab) => tab.isMembershipDestination !== false)
         : [{ key: "local", title: t("detail.library", {}, "Library"), type: "local" }];
     const snapshot = await libraryRepository
       .getMembershipSnapshot(item)
       .catch(() => ({ listMembership: {} }));
     this.libraryListMenu = {
       item,
+      sourceMode: await libraryRepository.getSourceMode().catch(() => LibrarySourceMode.LOCAL),
       tabs: resolvedTabs,
       membership: Object.fromEntries(
         resolvedTabs.map((tab) => [tab.key, Boolean(snapshot?.listMembership?.[tab.key])])
@@ -4567,7 +4708,10 @@ export const MetaDetailsScreen = {
     return this.mountLibraryListDialog();
   },
 
-  getResumeParamsForProgress(progress = null, { startOver = false } = {}) {
+  getResumeParamsForProgress(
+    progress = null,
+    { startOver = false, useActiveFallback = true } = {}
+  ) {
     if (startOver) {
       return {
         startFromBeginning: true,
@@ -4576,7 +4720,7 @@ export const MetaDetailsScreen = {
         resumeDurationMs: 0
       };
     }
-    const resume = progress || this.getActiveResumeProgress();
+    const resume = progress || (useActiveFallback ? this.getActiveResumeProgress() : null);
     if (!resume || !isWatchProgressInProgress(resume)) {
       return {};
     }
@@ -5025,7 +5169,8 @@ export const MetaDetailsScreen = {
     this.episodeHoldMenu = null;
     this.navigateToStreamScreenForEpisode(episode, {
       ...this.getResumeParamsForProgress(progress, {
-        startOver: Boolean(options.startOver)
+        startOver: Boolean(options.startOver),
+        useActiveFallback: false
       }),
       ...(options.manualSelection ? { manualSelection: true } : {})
     });
@@ -5070,6 +5215,7 @@ export const MetaDetailsScreen = {
           title: this.meta?.name || this.params?.fallbackTitle || episode.title || "Untitled",
           season: episode.season,
           episode: episode.episode,
+          videoId: episode.id,
           watchedAt: Date.now()
         });
         await watchProgressRepository.saveProgress({
@@ -5085,7 +5231,8 @@ export const MetaDetailsScreen = {
       } else {
         await watchedItemsRepository.unmark(this.params?.itemId, {
           season: episode.season,
-          episode: episode.episode
+          episode: episode.episode,
+          videoId: episode.id
         });
         await watchProgressRepository.removeProgress(this.params?.itemId, episode.id);
       }
@@ -5159,6 +5306,7 @@ export const MetaDetailsScreen = {
         title: this.meta?.name || this.params?.fallbackTitle || episode.title || "Untitled",
         season: episode.season,
         episode: episode.episode,
+        videoId: episode.id,
         watchedAt: Date.now()
       });
       await watchProgressRepository.saveProgress({
@@ -5174,7 +5322,8 @@ export const MetaDetailsScreen = {
     } else {
       await watchedItemsRepository.unmark(this.params?.itemId, {
         season: episode.season,
-        episode: episode.episode
+        episode: episode.episode,
+        videoId: episode.id
       });
       await watchProgressRepository.removeProgress(this.params?.itemId, episode.id);
     }
@@ -5268,31 +5417,45 @@ export const MetaDetailsScreen = {
     const action = String(actionOverride || "");
     if (action.startsWith("toggleLibraryList:")) {
       const key = action.slice("toggleLibraryList:".length);
-      this.libraryListMenu.membership = {
-        ...(this.libraryListMenu.membership || {}),
-        [key]: !this.libraryListMenu.membership?.[key]
-      };
-      this.detailHoldDialog?.setButtonSelected?.(
-        action,
-        Boolean(this.libraryListMenu.membership[key])
-      );
+      const nextSelected = !this.libraryListMenu.membership?.[key];
+      this.libraryListMenu.membership =
+        this.libraryListMenu.sourceMode === LibrarySourceMode.SIMKL
+          ? Object.fromEntries(
+              this.libraryListMenu.tabs.map((tab) => [tab.key, nextSelected && tab.key === key])
+            )
+          : { ...(this.libraryListMenu.membership || {}), [key]: nextSelected };
+      this.libraryListMenu.destructiveRemovalRequired = false;
+      if (this.libraryListMenu.sourceMode === LibrarySourceMode.SIMKL) {
+        this.mountLibraryListDialog();
+      } else {
+        this.detailHoldDialog?.setButtonSelected?.(
+          action,
+          Boolean(this.libraryListMenu.membership[key])
+        );
+      }
       return true;
     }
-    if (action === "saveLibraryLists") {
+    if (action === "saveLibraryLists" || action === "confirmDestructiveSimklRemoval") {
       try {
-        await libraryRepository.applyMembershipChanges(this.libraryListMenu.item, {
-          desiredMembership: this.libraryListMenu.membership || {}
-        });
+        await libraryRepository.applyMembershipChanges(
+          this.libraryListMenu.item,
+          {
+            desiredMembership: this.libraryListMenu.membership || {}
+          },
+          {
+            destructiveRemovalConfirmed: action === "confirmDestructiveSimklRemoval"
+          }
+        );
         this.isSavedInLibrary = Object.values(this.libraryListMenu.membership || {}).some(Boolean);
         this.closeHeroMenus({ restoreFocus: false });
         this.syncDetailActionButtons();
       } catch (error) {
         console.warn("Failed to update library lists", error);
-        this.libraryListMenu.error = t(
-          "detail_lists_save_failed",
-          {},
-          "Could not save list changes."
-        );
+        this.libraryListMenu.destructiveRemovalRequired =
+          error?.code === "SIMKL_DESTRUCTIVE_REMOVAL_REQUIRED";
+        this.libraryListMenu.error = this.libraryListMenu.destructiveRemovalRequired
+          ? "Removing this status will also clear watched history or a rating on Simkl. Confirm only if that is intended."
+          : t("detail_lists_save_failed", {}, "Could not save list changes.");
         this.mountLibraryListDialog();
       }
       return true;
@@ -6033,9 +6196,12 @@ export const MetaDetailsScreen = {
     ) {
       return;
     }
-    this.trailerAutoplayTimer = setTimeout(() => {
-      this.playTrailer({ muted: false, restart: true, initiatedByUser: false });
-    }, 7000);
+    this.trailerAutoplayTimer = setTimeout(
+      () => {
+        this.playTrailer({ muted: false, restart: true, initiatedByUser: false });
+      },
+      Math.min(15, Math.max(0, Number(PlayerSettingsStore.get().trailerDelaySeconds ?? 7))) * 1000
+    );
   },
 
   detachTrailerMediaListeners() {
@@ -6799,9 +6965,12 @@ export const MetaDetailsScreen = {
     if (!episode) {
       return;
     }
-    const progress = this.getEpisodeMenuProgress(episode) || this.getActiveResumeProgress();
+    const progress = this.getEpisodeMenuProgress(episode);
     this.navigateToStreamScreenForEpisode(episode, {
-      ...this.getResumeParamsForProgress(progress, options),
+      ...this.getResumeParamsForProgress(progress, {
+        ...options,
+        useActiveFallback: false
+      }),
       ...(options.manualSelection ? { manualSelection: true } : {})
     });
   },
@@ -7055,7 +7224,8 @@ export const MetaDetailsScreen = {
     const traktId = resolveMetaTraktId(this.meta, this.params);
     const contentLanguage = resolveMetaOriginalLanguage(this.meta, this.params);
     const resumeParams = this.getResumeParamsForProgress(
-      this.getEpisodeMenuProgress(pending.episode) || this.getActiveResumeProgress()
+      this.getEpisodeMenuProgress(pending.episode),
+      { useActiveFallback: false }
     );
     this.stopTrailerPlaybackForNavigation();
     Router.navigate("player", {

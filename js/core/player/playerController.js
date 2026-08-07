@@ -17,6 +17,9 @@ import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
 
 const MIN_PROGRESS_SYNC_DURATION_MS = 1000;
 const WEBOS_AUDIO_TRACK_SELECTION_TIMEOUT_MS = 4000;
+const AVPLAY_BUFFER_FOR_PLAY_SECONDS = 5;
+const AVPLAY_BUFFER_FOR_RESUME_SECONDS = 4;
+const AVPLAY_BUFFERING_TIMEOUT_SECONDS = 10;
 
 function logEngineFsDebug(...args) {
   if (globalThis.__NUVIO_DEBUG_ENGINEFS__) {
@@ -1380,14 +1383,14 @@ export const PlayerController = {
 
   retryAvPlaySubtitleTrackSelection(
     trackIndex,
-    { nudge = false, renderMode = this.avplaySubtitleRenderMode } = {}
+    { force = false, nudge = false, renderMode = this.avplaySubtitleRenderMode } = {}
   ) {
     const canonicalIndex = this.resolveAvPlaySubtitleTrackIndex(trackIndex);
     if (canonicalIndex < 0) {
       return false;
     }
     const currentIndex = this.getCurrentAvPlaySubtitleTrackIndex();
-    if (currentIndex === canonicalIndex) {
+    if (currentIndex === canonicalIndex && !force) {
       // Selection and rendering are separate AVPlay states. Reapply the
       // renderer even when Samsung already reports the requested track.
       this.applyAvPlaySubtitleRenderMode(renderMode);
@@ -1645,6 +1648,21 @@ export const PlayerController = {
     }
   },
 
+  retryPendingAvPlayStartupAudioTrackSelection() {
+    const pendingIndex = Number(this.pendingAvPlayAudioTrackIndex);
+    if (!Number.isFinite(pendingIndex) || pendingIndex < 0) {
+      return false;
+    }
+
+    const deadline = Number(this.desiredAvPlayAudioTrackUntil || 0);
+    if (deadline > 0 && Date.now() >= deadline) {
+      this.pendingAvPlayAudioTrackIndex = -1;
+      return false;
+    }
+
+    return this.applyPendingAvPlayAudioTrackSelection();
+  },
+
   nudgeAvPlayAfterTrackSwitch() {
     const avplay = this.getAvPlay();
     if (!avplay || typeof avplay.seekTo !== "function") {
@@ -1676,6 +1694,10 @@ export const PlayerController = {
     const selectionToken = Number(this.avplaySubtitleSelectionToken || 0) + 1;
     this.avplaySubtitleSelectionToken = selectionToken;
     this.avplaySubtitleRenderMode = normalizeAvPlaySubtitleRenderMode(renderMode);
+    // AVPlay can keep reporting the previous TEXT index after subtitles were
+    // hidden. Match Android's explicit TEXT re-enable by forcing only the
+    // bounded retries that return from Off/an addon to a built-in track.
+    const shouldForceSubtitleReactivation = Boolean(this.avplaySubtitlesSilent);
 
     const targetIndex = Number(trackIndex);
     if (!Number.isFinite(targetIndex) || targetIndex < 0) {
@@ -1757,6 +1779,7 @@ export const PlayerController = {
           return;
         }
         this.retryAvPlaySubtitleTrackSelection(canonicalIndex, {
+          force: shouldForceSubtitleReactivation,
           renderMode: this.avplaySubtitleRenderMode
         });
         this.syncAvPlayTrackInfo({ force: true });
@@ -2246,6 +2269,37 @@ export const PlayerController = {
     }
   },
 
+  configureAvPlayBuffering() {
+    const avplay = this.getAvPlay();
+    if (!avplay) {
+      return;
+    }
+
+    try {
+      avplay.setBufferingParam?.(
+        "PLAYER_BUFFER_FOR_PLAY",
+        "PLAYER_BUFFER_SIZE_IN_SECOND",
+        AVPLAY_BUFFER_FOR_PLAY_SECONDS
+      );
+    } catch (_) {
+      // Older firmware can reject custom buffering parameters.
+    }
+    try {
+      avplay.setBufferingParam?.(
+        "PLAYER_BUFFER_FOR_RESUME",
+        "PLAYER_BUFFER_SIZE_IN_SECOND",
+        AVPLAY_BUFFER_FOR_RESUME_SECONDS
+      );
+    } catch (_) {
+      // Keep AVPlay's default resume buffer when unsupported.
+    }
+    try {
+      avplay.setTimeoutForBuffering?.(AVPLAY_BUFFERING_TIMEOUT_SECONDS);
+    } catch (_) {
+      // Keep AVPlay's default timeout when unsupported.
+    }
+  },
+
   playWithAvPlay(url, requestHeaders = {}, _sourceType = null, playToken = null) {
     if (!this.canUseAvPlay()) {
       return false;
@@ -2274,6 +2328,7 @@ export const PlayerController = {
     try {
       avplay.open(this.avplayUrl);
       this.configureAvPlayForSource(requestHeaders);
+      this.configureAvPlayBuffering();
     } catch (error) {
       this.lastPlaybackErrorCode = this.mapAvPlayErrorToMediaCode(
         error?.name || error?.message || error
@@ -2300,6 +2355,7 @@ export const PlayerController = {
           }
           this.avplayReady = true;
           this.reapplyAvPlayPlaybackRate();
+          this.retryPendingAvPlayStartupAudioTrackSelection();
           this.applyAvPlayExternalSubtitleDelay();
           this.emitVideoEvent("canplay", { playbackEngine: this.playbackEngine });
         },
@@ -2311,6 +2367,7 @@ export const PlayerController = {
           if (Number.isFinite(value) && value >= 0) {
             this.avplayCurrentTimeMs = value;
           }
+          this.retryPendingAvPlayStartupAudioTrackSelection();
           this.applyAvPlayExternalSubtitleDelay();
           this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
         },
@@ -3392,7 +3449,10 @@ export const PlayerController = {
 
   getSupportedPlaybackRates() {
     if (Platform.isTizen() && this.isUsingAvPlay()) {
-      return [1, 2];
+      // AVPlay setSpeed() is trick play, not Android-style playback-speed
+      // processing. It cannot guarantee that audio is tempo-adjusted with
+      // video, so only expose the rate that preserves A/V synchronization.
+      return [1];
     }
     return [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   },
@@ -3402,7 +3462,7 @@ export const PlayerController = {
     if (!Number.isFinite(targetSpeed)) {
       return false;
     }
-    return [1, 2, 4, 8, 16].includes(targetSpeed);
+    return targetSpeed === 1;
   },
 
   applyAvPlayPlaybackRate(speed = this.desiredPlaybackRate) {
@@ -4389,10 +4449,16 @@ export const PlayerController = {
   },
 
   createProgressContext() {
+    const itemType = this.currentItemType || "movie";
+    const normalizedItemType = String(itemType).trim().toLowerCase();
+    const isSeries = normalizedItemType === "series" || normalizedItemType === "tv";
     return {
       itemId: this.currentItemId,
-      itemType: this.currentItemType || "movie",
-      videoId: this.currentVideoId || null,
+      itemType,
+      // Android stores movie progress at content level and episode progress at
+      // the exact season/episode identity. A movie's discovery video ID can
+      // vary between addons and must not split resume state by source.
+      videoId: isSeries ? this.currentVideoId || null : null,
       season: Number.isFinite(this.currentSeason) ? this.currentSeason : null,
       episode: Number.isFinite(this.currentEpisode) ? this.currentEpisode : null,
       title: this.currentItemTitle || null,

@@ -5,7 +5,7 @@
 
 > **Note:** This is a fork of the main repository ([NuvioMedia/NuvioWeb](https://github.com/NuvioMedia/NuvioWeb)).
 > It has been specifically modified to support and improve compatibility with **LG WebOS 4.x**.
-> It also includes support for a custom Cloudflare proxy (`WEBOS_CLOUD_PROXY_URL`) to handle cross-origin network requests, as well as native webOS deep-linking for remote stream casting from local LAN devices (`docs/cast.html`).
+> It also includes support for a custom Cloudflare proxy (`WEBOS_CLOUD_PROXY_URL`) to handle cross-origin network requests and bypass network limitations on older WebOS versions, as well as native webOS deep-linking for remote stream casting from local LAN devices (`docs/cast.html`).
 >
 > These modifications were made with the assistance of AI.
 

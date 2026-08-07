@@ -9,6 +9,8 @@ import { WatchedItemsSyncService } from "./watchedItemsSyncService.js";
 import { PluginSyncService } from "./pluginSyncService.js";
 import { ProfileSettingsSyncService } from "./profileSettingsSyncService.js";
 import { TraktCredentialSyncService } from "./traktCredentialSyncService.js";
+import { SimklCredentialSyncService } from "./simklCredentialSyncService.js";
+import { SimklSyncService } from "../../data/repository/simklSyncService.js";
 import { CollectionSyncService } from "./collectionSyncService.js";
 import { HomeCatalogSettingsSyncService } from "./homeCatalogSettingsSyncService.js";
 import { ThemeManager } from "../../ui/theme/themeManager.js";
@@ -137,6 +139,10 @@ export const StartupSyncService = {
           I18n.apply();
         }
         await TraktCredentialSyncService.pullFromRemote(ProfileManager.getActiveProfileId());
+        await SimklCredentialSyncService.pullFromRemote(ProfileManager.getActiveProfileId());
+        await SimklSyncService.refresh().catch((error) => {
+          console.warn("Simkl automatic refresh failed", error);
+        });
         if (!includeProfileScoped) {
           return didApplyProfileSettings;
         }
@@ -166,6 +172,7 @@ export const StartupSyncService = {
       await ProfileSyncService.push();
       await ProfileSettingsSyncService.push();
       await TraktCredentialSyncService.pushCurrentToRemote(ProfileManager.getActiveProfileId());
+      await SimklCredentialSyncService.pushCurrentToRemote(ProfileManager.getActiveProfileId());
       await CollectionSyncService.push();
       await HomeCatalogSettingsSyncService.push();
       await PluginSyncService.push();

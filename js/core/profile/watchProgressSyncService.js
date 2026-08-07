@@ -4,6 +4,7 @@ import { SupabaseApi } from "../../data/remote/supabase/supabaseApi.js";
 import { ProfileManager } from "./profileManager.js";
 import { LocalStore } from "../storage/localStore.js";
 import { TraktAuthStore } from "../../data/local/traktAuthStore.js";
+import { SimklAuthStore } from "../../data/local/simklAuthStore.js";
 import { TraktSettingsStore, WatchProgressSource } from "../../data/local/traktSettingsStore.js";
 
 const PULL_RPC = "sync_pull_watch_progress";
@@ -272,7 +273,10 @@ function resolveProfileId() {
 
 function shouldUseSupabaseWatchProgressSync() {
   const source = TraktSettingsStore.get().watchProgressSource || WatchProgressSource.TRAKT;
-  return !(TraktAuthStore.isAuthenticated() && source === WatchProgressSource.TRAKT);
+  const providerSelected =
+    (TraktAuthStore.isAuthenticated() && source === WatchProgressSource.TRAKT) ||
+    (SimklAuthStore.isAuthenticated() && source === WatchProgressSource.SIMKL);
+  return !providerSelected;
 }
 
 function toPositiveIntegerOrNull(value) {

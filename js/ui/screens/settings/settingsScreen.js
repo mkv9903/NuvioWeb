@@ -46,7 +46,6 @@ import { AuthManager } from "../../../core/auth/authManager.js";
 import { SupabaseApi } from "../../../data/remote/supabase/supabaseApi.js";
 import { Platform } from "../../../platform/index.js";
 import {
-  FAST_HORIZONTAL_NAVIGATION_KEY,
   ROTATED_DPAD_KEY,
   isFastHorizontalNavigationEnabled,
   shouldUseRotatedMapping
@@ -313,6 +312,11 @@ const PREFERRED_PLAYBACK_LANGUAGE_OPTIONS = [
   // "None" never auto-selects an audio track, leaving the stream's own
   // default playing (the player already treats "none" as no preference).
   { id: "none", labelKey: "common.none" },
+  ...AVAILABLE_LANGUAGES
+];
+const SECONDARY_PLAYBACK_LANGUAGE_OPTIONS = [
+  { id: "none", labelKey: "common.none" },
+  { id: "original", labelKey: "audio_lang_original", label: "Original language" },
   ...AVAILABLE_LANGUAGES
 ];
 
@@ -648,7 +652,7 @@ const SECTION_META = [
   {
     id: "streams",
     labelKey: "settings_stream_badges_section",
-    subtitle: "Import and manage Fusion badge URLs"
+    subtitleKey: "settings_stream_badges_description"
   },
   {
     id: "playback",
@@ -657,8 +661,8 @@ const SECTION_META = [
   },
   {
     id: "trakt",
-    labelKey: "settings.sections.trakt.label",
-    subtitleKey: "settings.sections.trakt.subtitle"
+    labelKey: "settings_tracking_title",
+    subtitleKey: "settings_tracking_subtitle"
   },
   {
     id: "advanced",
@@ -913,7 +917,7 @@ function translateSectionCopy(section) {
 
 function renderSectionNavIcon(sectionId) {
   if (sectionId === "trakt") {
-    return '<img class="settings-nav-icon settings-nav-icon-image" src="assets/icons/trakt_tv_glyph.svg" alt="" aria-hidden="true" />';
+    return '<span class="settings-nav-icon settings-nav-icon-material material-icons" aria-hidden="true">sync</span>';
   }
   if (sectionId === "playback") {
     return iconSvg(
@@ -1782,7 +1786,7 @@ function getVisibleSections(model) {
     if (section.hideFromNav) {
       return false;
     }
-    if (section.id === "account" || section.id === "trakt") {
+    if (section.id === "account" || section.id === "profiles") {
       return isPrimaryProfileActive;
     }
     return true;
@@ -2019,7 +2023,8 @@ function createDefaultExpandedState(sectionId) {
       homeContent: false,
       continueWatching: false,
       detailPage: false,
-      focusedPoster: false
+      focusedPoster: false,
+      cardAppearance: false
     };
   }
 
@@ -2248,6 +2253,7 @@ export const SettingsScreen = {
         : null,
       torrent: TorrentSettingsStore.get(),
       layout: LayoutPreferences.get(),
+      homeCatalog: HomeCatalogStore.get(),
       tmdb: TmdbSettingsStore.get(),
       mdbList: MdbListSettingsStore.get(),
       animeSkip: AnimeSkipSettingsStore.get(),
@@ -2351,6 +2357,7 @@ export const SettingsScreen = {
     value = "",
     icon = "chevron",
     leadingIcon = "",
+    leadingIconSrc = "",
     external = false,
     classes = "",
     disabled = false,
@@ -2372,7 +2379,7 @@ export const SettingsScreen = {
               data-zone="content"
               ${this.registerAction(focusKey, inert ? () => {} : this.actionMap.get(focusKey))}
               data-role="action">
-        ${leadingIcon ? `<span class="settings-row-leading-icon material-icons" aria-hidden="true">${escapeHtml(leadingIcon)}</span>` : ""}
+        ${leadingIconSrc ? `<img class="settings-row-leading-image" src="${escapeHtml(leadingIconSrc)}" alt="" aria-hidden="true">` : leadingIcon ? `<span class="settings-row-leading-icon material-icons" aria-hidden="true">${escapeHtml(leadingIcon)}</span>` : ""}
         <span class="settings-row-copy">
           <span class="settings-row-title">${escapeHtml(title)}</span>
           ${subtitle ? `<span class="settings-row-subtitle">${escapeHtml(subtitle)}</span>` : ""}
@@ -3037,7 +3044,9 @@ export const SettingsScreen = {
 
   renderAdvancedSection(model) {
     this.actionMap.set("advanced:fastHorizontalNavigation", () => {
-      LocalStore.set(FAST_HORIZONTAL_NAVIGATION_KEY, !isFastHorizontalNavigationEnabled());
+      LayoutPreferences.set({
+        fastHorizontalNavigationEnabled: !isFastHorizontalNavigationEnabled()
+      });
     });
     this.actionMap.set("advanced:strictDpadGrid", () => {
       LocalStore.set(STRICT_DPAD_GRID_KEY, !Boolean(LocalStore.get(STRICT_DPAD_GRID_KEY, true)));
@@ -3162,6 +3171,19 @@ export const SettingsScreen = {
       ThemeStore.set({ amoledSurfacesMode: !ThemeStore.get().amoledSurfacesMode });
       ThemeManager.apply();
     });
+    this.actionMap.set("appearance:settingsUiStyle", () => {
+      const options = ["CLASSIC", "HORIZON", "ZEN"].map((id) => ({
+        id,
+        labelKey: `settings_style_${id.toLowerCase()}`
+      }));
+      this.openOptionDialog({
+        title: t("appearance_settings_style", {}, "Settings style"),
+        options,
+        selectedId: model.theme.settingsUiStyle || "CLASSIC",
+        returnFocusKey: "appearance:settingsUiStyle",
+        onSelect: (option) => ThemeStore.set({ settingsUiStyle: option.id })
+      });
+    });
 
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "appearance"))}
@@ -3210,6 +3232,20 @@ export const SettingsScreen = {
         </div>
         <div class="settings-stack">
           ${this.renderActionRow({
+            focusKey: "appearance:settingsUiStyle",
+            title: t("appearance_settings_style", {}, "Settings style"),
+            subtitle: t(
+              "appearance_settings_style_subtitle",
+              {},
+              "Choose the layout used by Settings"
+            ),
+            value: t(
+              `settings_style_${String(model.theme.settingsUiStyle || "CLASSIC").toLowerCase()}`,
+              {},
+              String(model.theme.settingsUiStyle || "CLASSIC")
+            )
+          })}
+          ${this.renderActionRow({
             focusKey: "appearance:font",
             title: t("appearance_font", {}, "App Font"),
             subtitle: t("appearance_font_subtitle", {}, "Choose your preferred font"),
@@ -3245,6 +3281,9 @@ export const SettingsScreen = {
     this.actionMap.set("layout:toggle:focusedPoster", () => {
       this.toggleExpandedSection("layout", "focusedPoster");
     });
+    this.actionMap.set("layout:toggle:cardAppearance", () => {
+      this.toggleExpandedSection("layout", "cardAppearance");
+    });
 
     HOME_LAYOUT_OPTIONS.forEach((option) => {
       this.actionMap.set(`layout:layout:${option.id}`, () => {
@@ -3264,10 +3303,118 @@ export const SettingsScreen = {
     this.actionMap.set("layout:heroSection", () => {
       LayoutPreferences.set({ heroSectionEnabled: !LayoutPreferences.get().heroSectionEnabled });
     });
-    this.actionMap.set("layout:searchDiscover", () => {
-      LayoutPreferences.set({
-        searchDiscoverEnabled: !LayoutPreferences.get().searchDiscoverEnabled
+    this.actionMap.set("layout:heroCatalogs", () => {
+      const catalogSettings = model.homeCatalog || HomeCatalogStore.get();
+      const options = (catalogSettings.order || [])
+        .filter((key) => !catalogSettings.disabled?.includes(key))
+        .map((key) => ({
+          id: key,
+          label: catalogSettings.customTitles?.[key] || key.split("::").pop() || key
+        }));
+      this.openMultiChoiceDialog({
+        title: t("layout_hero_catalog", {}, "Hero catalogs"),
+        options,
+        selectedIds: model.layout.heroCatalogKeys || [],
+        returnFocusKey: "layout:heroCatalogs",
+        onToggle: (selectedIds) => LayoutPreferences.set({ heroCatalogKeys: selectedIds })
       });
+    });
+    this.actionMap.set("layout:searchDiscover", () => {
+      const options = [
+        { id: "in_search", labelKey: "layout_discover_location_in_search" },
+        { id: "in_sidebar", labelKey: "layout_discover_location_in_sidebar" },
+        { id: "off", labelKey: "common_off" }
+      ];
+      this.openOptionDialog({
+        title: t("layout_discover_location_dialog_title", {}, "Discover location"),
+        options,
+        selectedId: model.layout.discoverLocation || "in_search",
+        returnFocusKey: "layout:searchDiscover",
+        onSelect: (option) => LayoutPreferences.set({ discoverLocation: option.id })
+      });
+    });
+    this.actionMap.set("layout:classicFocusGradient", () =>
+      LayoutPreferences.set({
+        classicFocusGradientEnabled: !LayoutPreferences.get().classicFocusGradientEnabled
+      })
+    );
+    this.actionMap.set("layout:showFullReleaseDate", () =>
+      LayoutPreferences.set({ showFullReleaseDate: !LayoutPreferences.get().showFullReleaseDate })
+    );
+    this.actionMap.set("layout:detail:preferExternalMeta", () =>
+      LayoutPreferences.set({
+        preferExternalMetaAddonDetail: !LayoutPreferences.get().preferExternalMetaAddonDetail
+      })
+    );
+    this.actionMap.set("layout:continueWatchingCardStyle", () =>
+      this.openOptionDialog({
+        title: t("layout_cw_card_style", {}, "Continue Watching card style"),
+        options: ["card", "wide", "poster"].map((id) => ({
+          id,
+          labelKey: `layout_cw_card_style_${id}`
+        })),
+        selectedId: model.layout.continueWatchingCardStyle || "card",
+        returnFocusKey: "layout:continueWatchingCardStyle",
+        onSelect: (option) => LayoutPreferences.set({ continueWatchingCardStyle: option.id })
+      })
+    );
+    const openNumberSetting = (focusKey, titleKey, field, values, fallback) =>
+      this.actionMap.set(focusKey, () =>
+        this.openOptionDialog({
+          title: t(titleKey, {}, titleKey),
+          options: values.map((value) => ({ id: String(value), label: String(value) })),
+          selectedId: String(model.layout[field] ?? fallback),
+          returnFocusKey: focusKey,
+          onSelect: (option) => LayoutPreferences.set({ [field]: Number(option.id) })
+        })
+      );
+    openNumberSetting(
+      "layout:posterWidth",
+      "layout_card_width",
+      "posterCardWidthDp",
+      [96, 108, 116, 126, 136, 146, 156, 168],
+      126
+    );
+    openNumberSetting(
+      "layout:posterRadius",
+      "layout_card_radius",
+      "posterCardCornerRadiusDp",
+      [0, 4, 8, 12, 16, 20, 24],
+      12
+    );
+    openNumberSetting(
+      "layout:cardDepthEdge",
+      "settings_card_depth_edge_value",
+      "cardDepthEdgeStrength",
+      [0, 10, 20, 28, 40, 60, 80, 100],
+      28
+    );
+    openNumberSetting(
+      "layout:cardDepthSheen",
+      "settings_card_depth_sheen_value",
+      "cardDepthSheenStrength",
+      [0, 10, 20, 40, 60, 80, 100],
+      10
+    );
+    openNumberSetting(
+      "layout:cardDepthCoverage",
+      "settings_card_depth_coverage_value",
+      "cardDepthEdgeCoverage",
+      [0, 25, 50, 75, 100],
+      0
+    );
+    [
+      "Enabled",
+      "PostersEnabled",
+      "ContinueWatchingEnabled",
+      "EpisodeCardsEnabled",
+      "CastEnabled",
+      "TrailersEnabled"
+    ].forEach((suffix) => {
+      const field = `cardDepth${suffix}`;
+      this.actionMap.set(`layout:${field}`, () =>
+        LayoutPreferences.set({ [field]: !LayoutPreferences.get()[field] })
+      );
     });
     this.actionMap.set("layout:hideUnreleased", () => {
       LayoutPreferences.set({
@@ -3481,12 +3628,19 @@ export const SettingsScreen = {
           subtitle: t("settings.layout.heroSection.subtitle"),
           checked: Boolean(model.layout.heroSectionEnabled)
         })}
-        ${this.renderToggleRow({
+        ${model.layout.heroSectionEnabled ? this.renderActionRow({ focusKey: "layout:heroCatalogs", title: t("layout_hero_catalog", {}, "Hero catalogs"), subtitle: t("layout_hero_catalog_sub", {}, "Choose catalogs used by the Hero section"), value: model.layout.heroCatalogKeys?.length ? String(model.layout.heroCatalogKeys.length) : t("common_all", {}, "All") }) : ""}
+        ${this.renderActionRow({
           focusKey: "layout:searchDiscover",
-          title: t("settings.layout.searchDiscover.title"),
+          title: t("layout_discover_location_action", {}, "Discover location"),
           subtitle: t("settings.layout.searchDiscover.subtitle"),
-          checked: Boolean(model.layout.searchDiscoverEnabled)
+          value:
+            model.layout.discoverLocation === "in_sidebar"
+              ? t("layout_discover_location_in_sidebar")
+              : model.layout.discoverLocation === "off"
+                ? t("common.off", {}, "Off")
+                : t("layout_discover_location_in_search")
         })}
+        ${!isModernLayout ? this.renderToggleRow({ focusKey: "layout:classicFocusGradient", title: t("layout_classic_focus_gradient"), subtitle: t("layout_classic_focus_gradient_sub"), checked: Boolean(model.layout.classicFocusGradientEnabled) }) : ""}
         ${
           !isModernLayout
             ? this.renderToggleRow({
@@ -3524,6 +3678,7 @@ export const SettingsScreen = {
 
     const continueWatchingBody = `
       <div class="settings-stack">
+        ${this.renderActionRow({ focusKey: "layout:continueWatchingCardStyle", title: t("layout_cw_card_style", {}, "Card style"), subtitle: t("layout_section_continue_watching_desc", {}, "Choose the Continue Watching card shape"), value: t(`layout_cw_card_style_${model.layout.continueWatchingCardStyle || "card"}`, {}, model.layout.continueWatchingCardStyle || "card") })}
         ${this.renderToggleRow({
           focusKey: "layout:useEpisodeThumbnailsInCw",
           title: t("settings.layout.useEpisodeThumbnailsInCw.title", {}, "Use Episode Thumbnails"),
@@ -3603,9 +3758,9 @@ export const SettingsScreen = {
           focusKey: "layout:detail:preferExternalMeta",
           title: t("settings.layout.preferExternalMeta.title"),
           subtitle: t("settings.layout.preferExternalMeta.subtitle"),
-          checked: false,
-          disabled: true
+          checked: model.layout.preferExternalMetaAddonDetail !== false
         })}
+        ${this.renderToggleRow({ focusKey: "layout:showFullReleaseDate", title: t("layout_show_full_release_date"), subtitle: t("layout_show_full_release_date_sub"), checked: model.layout.showFullReleaseDate !== false })}
       </div>
     `;
 
@@ -3679,6 +3834,37 @@ export const SettingsScreen = {
       </div>
     `;
 
+    const cardAppearanceBody = `
+      <div class="settings-stack">
+        ${this.renderActionRow({ focusKey: "layout:posterWidth", title: t("layout_card_width", {}, "Card width"), subtitle: t("layout_section_card_style_desc", {}, "Adjust poster card width"), value: String(model.layout.posterCardWidthDp) })}
+        ${this.renderActionRow({ focusKey: "layout:posterRadius", title: t("layout_card_radius", {}, "Card corner radius"), subtitle: t("layout_section_card_style_desc", {}, "Adjust poster card corner radius"), value: String(model.layout.posterCardCornerRadiusDp) })}
+        ${this.renderToggleRow({ focusKey: "layout:cardDepthEnabled", title: t("settings_card_depth_enabled", {}, "Enable depth effect"), subtitle: t("settings_card_depth_description", {}, "Add edge light and sheen to image cards"), checked: Boolean(model.layout.cardDepthEnabled) })}
+        ${
+          model.layout.cardDepthEnabled
+            ? `
+          ${this.renderActionRow({ focusKey: "layout:cardDepthEdge", title: t("settings_card_depth_edge_value", {}, "Edge glow"), value: `${model.layout.cardDepthEdgeStrength}%` })}
+          ${this.renderActionRow({ focusKey: "layout:cardDepthSheen", title: t("settings_card_depth_sheen_value", {}, "Sheen"), value: `${model.layout.cardDepthSheenStrength}%` })}
+          ${this.renderActionRow({ focusKey: "layout:cardDepthCoverage", title: t("settings_card_depth_coverage_value", {}, "Edge coverage"), value: `${model.layout.cardDepthEdgeCoverage}%` })}
+          ${[
+            ["PostersEnabled", "settings_card_depth_surface_posters"],
+            ["ContinueWatchingEnabled", "settings_card_depth_surface_continue_watching"],
+            ["EpisodeCardsEnabled", "settings_card_depth_surface_episodes"],
+            ["CastEnabled", "settings_card_depth_surface_cast"],
+            ["TrailersEnabled", "settings_card_depth_surface_trailers"]
+          ]
+            .map(([suffix, key]) =>
+              this.renderToggleRow({
+                focusKey: `layout:cardDepth${suffix}`,
+                title: t(key, {}, key),
+                checked: model.layout[`cardDepth${suffix}`] !== false
+              })
+            )
+            .join("")}
+        `
+            : ""
+        }
+      </div>`;
+
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "layout"))}
       <div class="settings-group-card settings-group-card-fill">
@@ -3722,6 +3908,7 @@ export const SettingsScreen = {
             expanded: Boolean(expanded.focusedPoster),
             bodyHtml: focusedPosterBody
           })}
+          ${this.renderCollapsibleRow({ focusKey: "layout:toggle:cardAppearance", title: t("settings_card_depth_title", {}, "Card appearance"), subtitle: t("settings_card_depth_description", {}, "Size, corners and depth surfaces"), expanded: Boolean(expanded.cardAppearance), bodyHtml: cardAppearanceBody })}
         </div>
       </div>
     `;
@@ -4600,7 +4787,8 @@ export const SettingsScreen = {
         ["letterboxd", "showLetterboxd"],
         ["tomatoes", "showTomatoes"],
         ["audience", "showAudience"],
-        ["metacritic", "showMetacritic"]
+        ["metacritic", "showMetacritic"],
+        ["mal", "showMal"]
       ].forEach(([provider, field]) => {
         this.actionMap.set(`integration:mdblist:${provider}`, () => toggleMdbListSetting(field));
       });
@@ -4635,7 +4823,8 @@ export const SettingsScreen = {
               ["letterboxd", "showLetterboxd"],
               ["tomatoes", "showTomatoes"],
               ["audience", "showAudience"],
-              ["metacritic", "showMetacritic"]
+              ["metacritic", "showMetacritic"],
+              ["mal", "showMal"]
             ]
               .map(([provider, field]) =>
                 this.renderToggleRow({
@@ -5066,8 +5255,43 @@ export const SettingsScreen = {
     this.actionMap.set("playback:trailer", () => {
       PlayerSettingsStore.set({ trailerAutoplay: !PlayerSettingsStore.get().trailerAutoplay });
     });
+    this.actionMap.set("playback:trailerDelay", () =>
+      this.openOptionDialog({
+        title: t("audio_trailer_delay", {}, "Trailer delay"),
+        options: Array.from({ length: 16 }, (_, value) => ({
+          id: String(value),
+          label: `${value}s`
+        })),
+        selectedId: String(model.player.trailerDelaySeconds ?? 7),
+        returnFocusKey: "playback:trailerDelay",
+        onSelect: (option) => PlayerSettingsStore.set({ trailerDelaySeconds: Number(option.id) })
+      })
+    );
     this.actionMap.set("playback:skipIntro", () => {
       PlayerSettingsStore.set({ skipIntroEnabled: !PlayerSettingsStore.get().skipIntroEnabled });
+    });
+    const togglePlayerSetting = (focusKey, field) =>
+      this.actionMap.set(focusKey, () =>
+        PlayerSettingsStore.set({ [field]: !PlayerSettingsStore.get()[field] })
+      );
+    togglePlayerSetting("playback:loadingOverlay", "loadingOverlayEnabled");
+    togglePlayerSetting("playback:loadingStatus", "showPlayerLoadingStatus");
+    togglePlayerSetting("playback:pauseOverlay", "pauseOverlayEnabled");
+    togglePlayerSetting("playback:parentalGuide", "parentalGuideEnabled");
+    ["intro", "recap", "outro"].forEach((type) =>
+      this.actionMap.set(`playback:autoSkip:${type}`, () => {
+        const current = PlayerSettingsStore.get().autoSkipSegmentTypes || [];
+        PlayerSettingsStore.set({
+          autoSkipSegmentTypes: current.includes(type)
+            ? current.filter((entry) => entry !== type)
+            : [...current, type]
+        });
+      })
+    );
+    this.actionMap.set("playback:osdClock", () => {
+      PlayerSettingsStore.set({
+        osdClockEnabled: !PlayerSettingsStore.get().osdClockEnabled
+      });
     });
     this.actionMap.set("playback:forceDts", () => {
       const current = WebOsAudioCompatibilityStore.get();
@@ -5231,6 +5455,17 @@ export const SettingsScreen = {
         }
       });
     });
+    this.actionMap.set("playback:secondaryAudioLanguage", () => {
+      this.openOptionDialog({
+        title: t("sub_secondary_lang", {}, "Secondary Preferred Language"),
+        options: SECONDARY_PLAYBACK_LANGUAGE_OPTIONS,
+        selectedId: PlayerSettingsStore.get().secondaryPreferredAudioLanguage,
+        returnFocusKey: "playback:secondaryAudioLanguage",
+        onSelect: (option) => {
+          PlayerSettingsStore.set({ secondaryPreferredAudioLanguage: option.id });
+        }
+      });
+    });
     this.actionMap.set("playback:subtitlesEnabled", () => {
       PlayerSettingsStore.set({ subtitlesEnabled: !PlayerSettingsStore.get().subtitlesEnabled });
     });
@@ -5276,6 +5511,38 @@ export const SettingsScreen = {
         }
       });
     });
+    this.actionMap.set("playback:secondarySubtitleLanguage", () => {
+      const currentSettings = PlayerSettingsStore.get();
+      this.openOptionDialog({
+        title: t("sub_secondary_lang", {}, "Secondary subtitle language"),
+        options: PREFERRED_SUBTITLE_LANGUAGE_OPTIONS,
+        selectedId: currentSettings.secondarySubtitleLanguage || "off",
+        returnFocusKey: "playback:secondarySubtitleLanguage",
+        dialogClassName: "settings-language-dialog",
+        optionRenderer: "subtitle-language",
+        onSelect: (option) =>
+          PlayerSettingsStore.set({
+            secondarySubtitleLanguage: option.id,
+            subtitleStyle: {
+              ...currentSettings.subtitleStyle,
+              secondaryPreferredLanguage: option.id
+            }
+          })
+      });
+    });
+    this.actionMap.set("playback:subtitleStartupMode", () =>
+      this.openOptionDialog({
+        title: t("sub_startup_mode_title", {}, "Subtitle startup mode"),
+        options: [
+          { id: "FAST_STARTUP", labelKey: "sub_startup_mode_fast" },
+          { id: "PREFERRED_ONLY", labelKey: "sub_startup_mode_preferred" },
+          { id: "ALL_SUBTITLES", labelKey: "sub_startup_mode_all" }
+        ],
+        selectedId: model.player.addonSubtitleStartupMode || "ALL_SUBTITLES",
+        returnFocusKey: "playback:subtitleStartupMode",
+        onSelect: (option) => PlayerSettingsStore.set({ addonSubtitleStartupMode: option.id })
+      })
+    );
     this.actionMap.set("playback:renderMode", () => {
       this.openOptionDialog({
         title: t("settings.dialogs.subtitleRenderMode"),
@@ -5338,6 +5605,20 @@ export const SettingsScreen = {
         }
       });
     });
+    this.actionMap.set("playback:subtitleBackgroundColor", () =>
+      this.openOptionDialog({
+        title: t("sub_bg_color", {}, "Subtitle background color"),
+        options: [
+          { id: "#00000000", labelKey: "common_off" },
+          { id: "#00000080", label: "50%" },
+          { id: "#000000CC", label: "80%" },
+          { id: "#000000", label: "100%" }
+        ],
+        selectedId: PlayerSettingsStore.get().subtitleStyle?.backgroundColor || "#00000000",
+        returnFocusKey: "playback:subtitleBackgroundColor",
+        onSelect: (option) => updateSubtitleStyle({ backgroundColor: option.id })
+      })
+    );
     this.actionMap.set("playback:subtitleOutline", () => {
       updateSubtitleStyle({
         outlineEnabled: !PlayerSettingsStore.get().subtitleStyle?.outlineEnabled
@@ -5426,6 +5707,21 @@ export const SettingsScreen = {
             "Use IntroDB to detect intro, recap and outro segments when available."
           ),
           checked: Boolean(model.player.skipIntroEnabled)
+        })}
+        ${this.renderToggleRow({ focusKey: "playback:loadingOverlay", title: t("playback_loading_overlay"), subtitle: t("playback_loading_overlay_sub"), checked: model.player.loadingOverlayEnabled !== false })}
+        ${this.renderToggleRow({ focusKey: "playback:loadingStatus", title: t("playback_show_loading_status", {}, "Detailed loading status"), subtitle: t("playback_show_loading_status_sub", {}, "Show detailed player loading progress"), checked: model.player.showPlayerLoadingStatus !== false })}
+        ${this.renderToggleRow({ focusKey: "playback:pauseOverlay", title: t("playback_pause_overlay"), subtitle: t("playback_pause_overlay_sub"), checked: model.player.pauseOverlayEnabled !== false })}
+        ${this.renderToggleRow({ focusKey: "playback:parentalGuide", title: t("playback_parental_guide"), subtitle: t("playback_parental_guide_sub"), checked: model.player.parentalGuideEnabled !== false })}
+        ${["intro", "recap", "outro"].map((type) => this.renderToggleRow({ focusKey: `playback:autoSkip:${type}`, title: t(`auto_skip_${type}`, {}, `Auto-skip ${type}`), subtitle: t(`auto_skip_${type}_sub`, {}, `Skip ${type} segments automatically`), checked: model.player.autoSkipSegmentTypes?.includes(type) })).join("")}
+        ${this.renderToggleRow({
+          focusKey: "playback:osdClock",
+          title: t("playback_osd_clock", {}, "OSD Clock"),
+          subtitle: t(
+            "playback_show_clock_sub",
+            {},
+            "Show current time and end time while controls are visible."
+          ),
+          checked: Boolean(model.player.osdClockEnabled)
         })}
         ${this.renderActionRow({
           focusKey: "playback:nextEpisodeThresholdMode",
@@ -5644,11 +5940,22 @@ export const SettingsScreen = {
           subtitle: t("settings.playback.autoplayTrailer.subtitle"),
           checked: Boolean(model.player.trailerAutoplay)
         })}
+        ${model.player.trailerAutoplay ? this.renderActionRow({ focusKey: "playback:trailerDelay", title: t("audio_trailer_delay"), subtitle: t("audio_trailer_delay_sub", {}, "Delay before trailer playback starts"), value: `${model.player.trailerDelaySeconds ?? 7}s` }) : ""}
         ${this.renderActionRow({
           focusKey: "playback:audioLanguage",
           title: t("settings.playback.preferredAudio.title"),
           subtitle: t("settings.playback.preferredAudio.subtitle"),
           value: labelForPlaybackLanguage(model.player.preferredAudioLanguage)
+        })}
+        ${this.renderActionRow({
+          focusKey: "playback:secondaryAudioLanguage",
+          title: t("sub_secondary_lang", {}, "Secondary Preferred Language"),
+          subtitle: t(
+            "settings.playback.preferredAudio.subtitle",
+            {},
+            "Choose the audio language to prefer when it is available."
+          ),
+          value: labelForPlaybackLanguage(model.player.secondaryPreferredAudioLanguage)
         })}
       </div>
     `;
@@ -5692,6 +5999,8 @@ export const SettingsScreen = {
           subtitle: t("settings.playback.subtitleLanguage.subtitle"),
           value: labelForSubtitlePlaybackLanguage(model.player.subtitleLanguage)
         })}
+        ${this.renderActionRow({ focusKey: "playback:secondarySubtitleLanguage", title: t("sub_secondary_lang", {}, "Secondary subtitle language"), subtitle: t("sub_secondary_lang_sub", {}, "Fallback language when the preferred language is unavailable"), value: labelForSubtitlePlaybackLanguage(model.player.secondarySubtitleLanguage) })}
+        ${this.renderActionRow({ focusKey: "playback:subtitleStartupMode", title: t("sub_startup_mode_title", {}, "Subtitle startup mode"), subtitle: t("sub_startup_mode_all_desc", {}, "Choose how addon subtitles are loaded at startup"), value: t(model.player.addonSubtitleStartupMode === "FAST_STARTUP" ? "sub_startup_mode_fast" : model.player.addonSubtitleStartupMode === "PREFERRED_ONLY" ? "sub_startup_mode_preferred" : "sub_startup_mode_all") })}
         ${this.renderToggleRow({
           focusKey: "playback:showOnlyPreferredSubtitleLanguages",
           title: t("sub_show_only_preferred_languages", {}, "Show Only Preferred Languages"),
@@ -5762,6 +6071,7 @@ export const SettingsScreen = {
             normalizeSubtitleStyleHex(model.player.subtitleStyle?.textColor, "#FFFFFF")
           )
         })}
+        ${this.renderActionRow({ focusKey: "playback:subtitleBackgroundColor", title: t("sub_bg_color", {}, "Subtitle background color"), subtitle: t("sub_bg_color", {}, "Background behind subtitle text"), value: String(model.player.subtitleStyle?.backgroundColor || "#00000000") })}
         ${this.renderToggleRow({
           focusKey: "playback:subtitleOutline",
           title: t("settings.playback.subtitleOutline.title", {}, "Subtitle outline"),
@@ -6131,13 +6441,6 @@ export const SettingsScreen = {
         }
       });
     });
-    this.actionMap.set("trakt:toggleScrobbling", () => {
-      const current = TraktSettingsStore.get().enableScrobbling;
-      TraktSettingsStore.setEnableScrobbling(!current);
-      this.traktStatusMessage = !current
-        ? t("trakt_scrobbling_enabled", {}, "Scrobbling to Trakt is now enabled")
-        : t("trakt_scrobbling_disabled", {}, "Scrobbling to Trakt is now disabled");
-    });
 
     return `
       <div class="settings-slide-panel settings-trakt-panel">
@@ -6277,12 +6580,6 @@ export const SettingsScreen = {
           subtitle: t("trakt_comments_subtitle", {}, "Show Trakt reviews on metadata pages"),
           value: labelForTraktComments(settings.showMetaComments)
         })}
-        ${this.renderToggleRow({
-          focusKey: "trakt:toggleScrobbling",
-          title: t("trakt_scrobbling_title", {}, "Scrobbling"),
-          subtitle: t("trakt_scrobbling_subtitle", {}, "Automatically scrobble playback to Trakt"),
-          checked: Boolean(settings.enableScrobbling)
-        })}
       </div>
     `;
   },
@@ -6295,8 +6592,12 @@ export const SettingsScreen = {
         <div class="settings-stack">
           ${this.renderActionRow({
             focusKey: "trakt:open",
-            title: t("settings.trakt.openSettings", {}, "Trakt"),
-            subtitle: t("settings.trakt.openSettingsSubtitle", {}, "Open Trakt connection screen.")
+            title: t("settings.tracking.openSettings", {}, "Tracking"),
+            subtitle: t(
+              "settings.tracking.openSettingsSubtitle",
+              {},
+              "Connect Trakt or Simkl and choose library and progress sources."
+            )
           })}
         </div>
       </div>
@@ -6391,6 +6692,9 @@ export const SettingsScreen = {
 
     const shell = this.container.querySelector(".settings-shell");
     if (shell) {
+      shell.dataset.settingsStyle = String(
+        this.model.theme.settingsUiStyle || "CLASSIC"
+      ).toLowerCase();
       shell.classList.toggle("settings-route-enter", Boolean(this.settingsRouteEnterPending));
       if (this.settingsRouteEnterPending) {
         void shell.offsetWidth;
@@ -7040,6 +7344,31 @@ export const SettingsScreen = {
       }
 
       if (this.focusZone === "nav") {
+        const horizonStyle = String(this.model?.theme?.settingsUiStyle || "CLASSIC") === "HORIZON";
+        if (horizonStyle && code === 37) {
+          this.moveNavFocus(this.navIndex - 1);
+          return;
+        }
+        if (horizonStyle && code === 39) {
+          this.moveNavFocus(this.navIndex + 1);
+          return;
+        }
+        if (horizonStyle && code === 40) {
+          const firstContent = this.container.querySelector(".settings-content-focusable");
+          if (firstContent) {
+            this.focusZone = "content";
+            this.contentFocusKey = String(firstContent.dataset.focusKey || "");
+            this.applyFocus();
+          }
+          return;
+        }
+        if (horizonStyle && code === 38) {
+          const sidebarNodes = getRootSidebarNodes(this.container, this.layoutPrefs);
+          const selectedSidebarNode = getRootSidebarSelectedNode(this.container, this.layoutPrefs);
+          this.sidebarFocusIndex = Math.max(0, sidebarNodes.indexOf(selectedSidebarNode));
+          await this.openSidebar();
+          return;
+        }
         if (code === 38) {
           this.moveNavFocus(this.navIndex - 1);
           return;
@@ -7067,6 +7396,14 @@ export const SettingsScreen = {
       }
 
       if (this.focusZone === "content") {
+        if (code === 38 && String(this.model?.theme?.settingsUiStyle || "CLASSIC") === "HORIZON") {
+          if (!this.moveContent("up")) {
+            this.syncNavFocusToActive();
+            this.focusZone = "nav";
+            this.applyFocus();
+          }
+          return;
+        }
         if (code === 37) {
           const moved = this.moveContent("left");
           if (!moved) {

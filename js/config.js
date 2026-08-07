@@ -31,3 +31,6 @@ export const TRAKT_API_URL = String(runtimeEnv.TRAKT_API_URL || "https://api.tra
 export const TRAKT_REDIRECT_URI = String(
   runtimeEnv.TRAKT_REDIRECT_URI || "urn:ietf:wg:oauth:2.0:oob"
 ).trim();
+export const SIMKL_CLIENT_ID = String(runtimeEnv.SIMKL_CLIENT_ID || "").trim();
+export const SIMKL_API_URL = String(runtimeEnv.SIMKL_API_URL || "https://api.simkl.com").trim();
+export const SIMKL_APP_NAME = String(runtimeEnv.SIMKL_APP_NAME || "nuvio").trim() || "nuvio";

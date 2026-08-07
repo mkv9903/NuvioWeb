@@ -1023,11 +1023,19 @@ export const StreamScreen = {
       }
     }
 
+    // A restored snapshot already holds the finished list, so settle `loading`
+    // before the first paint. Flipping it afterwards used to force a second
+    // full render of an identical list - ~170ms on a 180-stream result.
+    const restoringFromBack = Boolean(
+      restored && navigationContext?.isBackNavigation && this.streams.length
+    );
+    if (restoringFromBack) {
+      this.loading = false;
+    }
+
     this.render();
 
-    if (restored && navigationContext?.isBackNavigation && this.streams.length) {
-      this.loading = false;
-      this.render();
+    if (restoringFromBack) {
       return;
     }
 
@@ -2288,7 +2296,7 @@ export const StreamScreen = {
           </section>
         </div>`;
 
-    this.container.innerHTML = `
+    const nextMarkup = `
       <div class="stream-route-shell${shellStableClass}">
         <div class="stream-route-backdrop"${backdrop ? ` style="background-image:url('${String(backdrop).replace(/'/g, "%27")}')"` : ""}></div>
         <div class="stream-route-backdrop-dim"></div>
@@ -2299,6 +2307,21 @@ export const StreamScreen = {
         ${this.renderAutoPlayOverlay()}
       </div>
     `;
+
+    // Addon logos and the webOS image proxy each schedule their own render once
+    // they resolve, so a settled list is rebuilt several times over. Measured on
+    // a 407-source list: three consecutive renders produced byte-identical
+    // markup at ~1s each, so two of them were pure parse/layout/paint cost.
+    // Keep the exact generated markup. Fixed-width hashes are not sufficient
+    // here because stream/addon text is part of the string and collisions could
+    // otherwise cause a genuinely changed list to retain stale DOM.
+    const shellMounted = Boolean(this.container.querySelector(".stream-route-shell"));
+    const markupUnchanged = shellMounted && this.renderedMarkup === nextMarkup;
+
+    if (!markupUnchanged) {
+      this.container.innerHTML = nextMarkup;
+      this.renderedMarkup = nextMarkup;
+    }
 
     this.restoreScrollPosition();
     this.hydrateVisibleStreamBadges();
@@ -2315,6 +2338,13 @@ export const StreamScreen = {
     if (!list) {
       return;
     }
+    // A full innerHTML write used to discard this node along with its listeners.
+    // Now that an unchanged render keeps the node alive, re-binding would stack
+    // a duplicate scroll handler on every render.
+    if (this.boundStreamListNode === list) {
+      return;
+    }
+    this.boundStreamListNode = list;
     list.addEventListener(
       "scroll",
       () => {
@@ -2440,12 +2470,16 @@ export const StreamScreen = {
     let resumeProgressPercent = hasRouteResume ? routeResumeProgress.progressPercent : null;
     let resumeDurationMs = hasRouteResume ? routeResumeProgress.durationMs : 0;
     if (!startFromBeginning && resumePositionMs <= 0 && !(Number(resumeProgressPercent) > 0)) {
+      const resumeTarget =
+        itemType === "series" || itemType === "tv"
+          ? {
+              videoId: this.params?.videoId || null,
+              season: this.params?.season,
+              episode: this.params?.episode
+            }
+          : {};
       const resumeProgress = await watchProgressRepository
-        .getResumeByContentId(this.params?.itemId, {
-          videoId: this.params?.videoId || null,
-          season: this.params?.season,
-          episode: this.params?.episode
-        })
+        .getResumeByContentId(this.params?.itemId, resumeTarget)
         .catch((error) => {
           console.warn("Stream resume lookup failed", error);
           return null;
@@ -2737,6 +2771,8 @@ export const StreamScreen = {
       this.releaseImageProxyReadyListener();
       this.releaseImageProxyReadyListener = null;
     }
+    this.renderedMarkup = null;
+    this.boundStreamListNode = null;
     ScreenUtils.hide(this.container);
   }
 };

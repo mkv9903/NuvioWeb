@@ -30,6 +30,7 @@ export function renderModernHomeLayout({
   continueWatchingRenderLimit = 30,
   useEpisodeThumbnailsInCw = true,
   blurContinueWatchingNextUp = false,
+  continueWatchingCardStyle = "card",
   rowItemLimit = 15,
   showHeroSection = false,
   showPosterLabels = true,
@@ -146,7 +147,8 @@ export function renderModernHomeLayout({
               loadingCount: continueWatchingLoadingCount,
               itemLimit: continueWatchingRenderLimit,
               useEpisodeThumbnails: useEpisodeThumbnailsInCw,
-              blurNextUp: blurContinueWatchingNextUp
+              blurNextUp: blurContinueWatchingNextUp,
+              cardStyle: continueWatchingCardStyle
             })}
             <div class="home-modern-catalogs">
               ${sectionsMarkup.join("")}
