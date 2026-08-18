@@ -8,6 +8,7 @@ import {
   toDisplayTypeLabel
 } from "../../../core/addons/homeCatalogs.js";
 import { Platform } from "../../../platform/index.js";
+import { ExperienceModeStore } from "../../../data/local/experienceModeStore.js";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -24,6 +25,10 @@ function escapeHtml(value) {
 
 export const CatalogOrderScreen = {
   async mount() {
+    if (ExperienceModeStore.isEssential()) {
+      await Router.navigate("plugin", {}, { replaceHistory: true, skipStackPush: true });
+      return;
+    }
     this.container = document.getElementById("catalogOrder");
     ScreenUtils.show(this.container);
     this.focusRow = Number.isFinite(this.focusRow) ? this.focusRow : 0;

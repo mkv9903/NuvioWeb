@@ -335,6 +335,10 @@ class AddonRepository {
         return { status: "success", data: this.withDisplayNameOverride(fallback) };
       }
 
+      console.warn(
+        `[AddonRepository] Failed to fetch manifest for ${cleanBaseUrl}:`,
+        result.message || result
+      );
       this.manifestErrorCache.set(cleanBaseUrl, result);
       return result;
     })();

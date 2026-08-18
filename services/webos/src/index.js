@@ -140,8 +140,8 @@ function registerCommand(commandName, includeBody) {
   });
 }
 
-function registerSupabaseProxyCommand() {
-  service.register("supabaseProxy", function (message) {
+function registerSafeHttpProxyCommand(commandName) {
+  service.register(commandName, function (message) {
     var payload = getMessagePayload(message);
     var proxyRequest = {
       url: payload.url,
@@ -398,7 +398,9 @@ function registerBitmapSubtitleCommand() {
         respond(message, Object.assign(buildBasePayload(), result, { returnValue: true }));
       })
       .catch(function (error) {
-        console.error("[" + SERVICE_ID + "] bitmap subtitle extraction failed:", error);
+        if (!error || error.code !== "REQUEST_SUPERSEDED") {
+          console.error("[" + SERVICE_ID + "] bitmap subtitle extraction failed:", error);
+        }
         respond(
           message,
           buildErrorPayload(error, {
@@ -1384,7 +1386,8 @@ function registerEngineFsDiagnosticCommand() {
 ensureRuntimeStarted();
 registerCommand("ping", false);
 registerCommand("status", true);
-registerSupabaseProxyCommand();
+registerSafeHttpProxyCommand("supabaseProxy");
+registerSafeHttpProxyCommand("safeHttpProxy");
 registerEngineFsKeepAliveCommands();
 registerTracksCommand();
 registerSubtitleTextCommand();

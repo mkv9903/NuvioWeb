@@ -30,11 +30,29 @@ export async function proxyFetch(url, fetchInit) {
     const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(url)}`;
     const proxyToken =
       typeof window !== "undefined" ? window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN : null;
-    const modifiedInit = { ...fetchInit };
+    const headers = toHeaderObject(fetchInit?.headers);
     if (proxyToken) {
-      modifiedInit.headers = { ...(modifiedInit.headers || {}), "x-proxy-token": proxyToken };
+      headers["x-proxy-token"] = proxyToken;
     }
-    return await _originalFetch(targetUrl, modifiedInit);
+    const modifiedInit = { ...(fetchInit || {}), headers };
+    try {
+      const response = await _originalFetch(targetUrl, modifiedInit);
+      if (!response.ok) {
+        if (response.status === 403) {
+          console.error(
+            `[CloudProxy 403 Forbidden] ${url} — Token mismatch. Check WEBOS_CLOUD_PROXY_TOKEN in local.properties and Cloudflare Worker.`
+          );
+        } else if (response.status === 502) {
+          console.error(`[CloudProxy 502 Bad Gateway] ${url} — Cloudflare failed to fetch target.`);
+        } else {
+          console.warn(`[CloudProxy ${response.status}] ${url}`);
+        }
+      }
+      return response;
+    } catch (networkError) {
+      console.error(`[CloudProxy Exception] Failed to fetch ${url}:`, networkError);
+      throw networkError;
+    }
   } else {
     return (
       (await fetchViaWebOsSupabaseProxy(url, fetchInit)) || (await _originalFetch(url, fetchInit))
@@ -97,13 +115,11 @@ if (typeof window !== "undefined") {
       // Route through Cloudflare proxy
       const targetUrl = `${cloudProxyUrl}?url=${encodeURIComponent(urlStr)}`;
       const proxyToken = window.__NUVIO_ENV__?.WEBOS_CLOUD_PROXY_TOKEN;
-      const modifiedOptions = { ...(options || {}) };
+      const headers = toHeaderObject(options?.headers);
       if (proxyToken) {
-        modifiedOptions.headers = {
-          ...(modifiedOptions.headers || {}),
-          "x-proxy-token": proxyToken
-        };
+        headers["x-proxy-token"] = proxyToken;
       }
+      const modifiedOptions = { ...(options || {}), headers };
       return await _originalFetch(targetUrl, modifiedOptions);
     }
     return _originalFetch(url, options);
@@ -160,6 +176,7 @@ export async function httpRequest(url, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
+    console.warn(`[HTTP ${method} ${response.status}] ${url}:`, text);
     const error = new Error(text);
     error.status = response.status;
     try {

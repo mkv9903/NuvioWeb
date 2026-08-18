@@ -1,5 +1,6 @@
 import { LocalStore } from "../../core/storage/localStore.js";
 import { ProfileManager } from "../../core/profile/profileManager.js";
+import { queueProfileSettingsCloudSync } from "./profileScopedStore.js";
 
 const KEY = "continueWatchingPreferences";
 const VERSION = 1;
@@ -41,12 +42,22 @@ function writeForProfile(profileId, state) {
   const all = readAll();
   all[pid] = normalizeState(state);
   writeAll(all);
+  queueProfileSettingsCloudSync(pid);
   return all[pid];
 }
 
 export const ContinueWatchingPreferences = {
   getDismissedNextUpKeys(profileId = activeProfileId()) {
     return readForProfile(profileId).dismissedNextUpKeys;
+  },
+
+  replaceDismissedNextUpKeys(keys, profileId = activeProfileId(), { silentSync = false } = {}) {
+    const pid = String(profileId || "1");
+    const all = readAll();
+    all[pid] = normalizeState({ dismissedNextUpKeys: Array.isArray(keys) ? keys : [] });
+    writeAll(all);
+    if (!silentSync) queueProfileSettingsCloudSync(pid);
+    return all[pid];
   },
 
   addDismissedNextUpKey(key, profileId = activeProfileId()) {

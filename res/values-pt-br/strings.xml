@@ -2703,4 +2703,13 @@
     <string name="playback_net_http2">Ativar HTTP/2</string>
     <string name="playback_net_http2_sub">Ativa o protocolo HTTP/2 para conexões de rede, permitindo multiplexação de requisições e conexões mais rápidas.</string>
     <string name="playback_estimated_memory_usage">Uso estimado de memória: %1$d / %2$d MB</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">O Nuvio se conecta ao Premiumize para autenticação de conta, acesso à biblioteca na nuvem, verificação de cache e recursos de reprodução na nuvem. O Nuvio não é afiliado ou endossado pelo Premiumize.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">O Nuvio se conecta ao TorBox para autenticação de conta, acesso à biblioteca na nuvem, verificação de cache e recursos de reprodução na nuvem. O Nuvio não é afiliado ou endossado pelo TorBox.</string>
+    <string name="debrid_selection_count_value">{{count}} selecionado</string>
+    <string name="cloud_library_search_label">Pesquisar na biblioteca em nuvem</string>
+    <string name="cloud_library_search_placeholder">Pesquisar arquivos</string>
+    <string name="cloud_library_search_clear">Limpar pesquisa</string>
+    <string name="upcoming_section_title">Próximos</string>
 </resources>

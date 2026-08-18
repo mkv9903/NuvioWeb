@@ -438,6 +438,7 @@ function setTmdbDiscoverParam(params, key, value) {
 function applyTmdbDiscoverFilters(params, filters = {}, mediaType = "movie") {
   const isTv = String(mediaType || "").toLowerCase() === "tv";
   setTmdbDiscoverParam(params, "with_genres", filters.withGenres);
+  setTmdbDiscoverParam(params, "without_genres", filters.withoutGenres);
   setTmdbDiscoverParam(
     params,
     isTv ? "first_air_date.gte" : "primary_release_date.gte",
@@ -454,18 +455,23 @@ function applyTmdbDiscoverFilters(params, filters = {}, mediaType = "movie") {
   setTmdbDiscoverParam(params, "with_original_language", filters.withOriginalLanguage);
   setTmdbDiscoverParam(params, "with_origin_country", filters.withOriginCountry);
   setTmdbDiscoverParam(params, "with_keywords", filters.withKeywords);
+  setTmdbDiscoverParam(params, "without_keywords", filters.withoutKeywords);
   setTmdbDiscoverParam(params, "with_companies", filters.withCompanies);
+  setTmdbDiscoverParam(params, "without_companies", filters.withoutCompanies);
   if (isTv) {
     setTmdbDiscoverParam(params, "with_networks", filters.withNetworks);
   }
   if (Number.isFinite(Number(filters.year)) && Number(filters.year) > 0) {
     params.set(isTv ? "first_air_date_year" : "year", String(Math.trunc(Number(filters.year))));
   }
-  if (filters.withWatchProviders) {
+  if (filters.withWatchProviders || filters.withoutWatchProviders) {
     setTmdbDiscoverParam(params, "watch_region", filters.watchRegion || "US");
+  }
+  if (filters.withWatchProviders) {
     setTmdbDiscoverParam(params, "with_watch_providers", filters.withWatchProviders);
     setTmdbDiscoverParam(params, "with_watch_monetization_types", "flatrate|free|ads|rent|buy");
   }
+  setTmdbDiscoverParam(params, "without_watch_providers", filters.withoutWatchProviders);
 }
 
 function mapTmdbListItem(item = {}, mediaType = "movie") {

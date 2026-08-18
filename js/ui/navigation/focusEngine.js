@@ -43,15 +43,9 @@ function hasActiveModal() {
 }
 
 const BACK_DEBOUNCE_MS = 250;
-const TIZEN_PAIRED_BACK_EVENT_WINDOW_MS = 3000;
-
-function getBackInputChannel(event) {
-  return String(event?.type || "").toLowerCase() === "tizenhwkey" ? "tizenhwkey" : "keydown";
-}
 
 export const FocusEngine = {
   lastBackHandledAt: 0,
-  lastBackHandledChannel: "",
   lastPointerFocusTarget: null,
   pointerMoveFrame: null,
   pendingPointerMoveEvent: null,
@@ -99,14 +93,7 @@ export const FocusEngine = {
   handleBack(event, normalizedEvent = buildNormalizedEvent(event)) {
     const now = Date.now();
     const elapsedSinceHandled = now - Number(this.lastBackHandledAt || 0);
-    const inputChannel = getBackInputChannel(event);
-    const isPairedTizenEvent = Boolean(
-      Platform.isTizen() &&
-      this.lastBackHandledChannel &&
-      this.lastBackHandledChannel !== inputChannel &&
-      elapsedSinceHandled < TIZEN_PAIRED_BACK_EVENT_WINDOW_MS
-    );
-    if (normalizedEvent.repeat || elapsedSinceHandled < BACK_DEBOUNCE_MS || isPairedTizenEvent) {
+    if (normalizedEvent.repeat || elapsedSinceHandled < BACK_DEBOUNCE_MS) {
       normalizedEvent.preventDefault();
       normalizedEvent.stopPropagation();
       normalizedEvent.stopImmediatePropagation();
@@ -114,7 +101,6 @@ export const FocusEngine = {
       return;
     }
     this.lastBackHandledAt = now;
-    this.lastBackHandledChannel = inputChannel;
 
     normalizedEvent.preventDefault();
     normalizedEvent.stopPropagation();

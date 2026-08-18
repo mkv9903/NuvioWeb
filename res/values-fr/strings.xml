@@ -931,7 +931,7 @@
     <string name="profile_pin_overlay_forgot_hint">Code PIN oublié ? Réinitialise-le depuis ton compte Nuvio sur le site web.</string>
     <string name="profile_pin_overlay_back_hint">Appuie sur « Retour » pour annuler</string>
     <string name="essential_addon_setup_title">Installer un addon</string>
-    <string name="essential_addon_setup_subtitle">Installe un addon pour commencer à diffuser. Tu pourras en ajouter d’autres plus tard depuis Addons.</string>
+    <string name="essential_addon_setup_subtitle">Installez un addon pour commencer à diffuser. Vous pourrez en ajouter d’autres plus tard depuis Addons.</string>
     <string name="essential_addon_show_qr">Afficher le QR</string>
     <string name="collection_editor_no_trakt_lists_found">Aucune liste Trakt trouvée</string>
     <string name="collection_editor_untitled_folder">Sans titre</string>
@@ -1326,7 +1326,7 @@
     <string name="catalog_see_all_empty_title">Aucun élément disponible</string>
     <string name="catalog_see_all_empty_subtitle">Essaie un autre catalogue ou reviens plus tard</string>
     <string name="layout_selection_welcome">Bienvenue sur Nuvio</string>
-    <string name="layout_selection_subtitle">Choisis la disposition de ton écran d’accueil</string>
+    <string name="layout_selection_subtitle">Choisissez la disposition de votre écran d’accueil</string>
     <string name="layout_selection_continue">Continuer</string>
     <string name="update_title">Mise à jour de l’application</string>
     <string name="update_installer_required">Utilisez Nuvio WebTV Installer pour mettre à jour l’application sur votre téléviseur.</string>
@@ -1791,12 +1791,12 @@
     <string name="collections_editor_tmdb_person_title_placeholder">Films de Tom Hanks, acteurs favoris</string>
     <string name="experience_mode_confirm_advanced_subtitle">Ce mode révèle l’ensemble des paramètres, y compris la configuration avancée et les contrôles de catalogue, de collection et de réglage fin.</string>
     <string name="experience_mode_confirm_advanced_title">Passer en mode avancé&#160;?</string>
-    <string name="experience_mode_confirm_essential_subtitle">Les écrans de configuration avancée seront masqués, mais tes paramètres enregistrés restent inchangés. Tu peux revenir en arrière à tout moment.</string>
+    <string name="experience_mode_confirm_essential_subtitle">Les écrans de configuration avancée seront masqués, mais vos paramètres enregistrés restent inchangés. Vous pouvez revenir en arrière à tout moment.</string>
     <string name="experience_mode_confirm_essential_title">Passer en mode essentiel&#160;?</string>
     <string name="experience_mode_essential">Essentiel</string>
     <string name="experience_mode_advanced">Avancé</string>
-    <string name="experience_mode_choose_title">Choisis ton expérience Nuvio</string>
-    <string name="experience_mode_choose_subtitle">Commence simple ou débloque toutes les options. Tu peux changer à tout moment.</string>
+    <string name="experience_mode_choose_title">Choisissez votre expérience Nuvio</string>
+    <string name="experience_mode_choose_subtitle">Commencez simple ou débloquez toutes les options. Vous pouvez changer à tout moment.</string>
     <string name="experience_mode_essential_card_subtitle">Configuration ciblée, addons, options de lecture de base, Trakt et paramètres de compte.</string>
     <string name="experience_mode_advanced_card_subtitle">Tous les paramètres&#160;: mise en page, ordre des catalogues, collections, plug-ins et diagnostics.</string>
     <string name="experience_mode_group_title">Mode d’expérience</string>
@@ -1812,7 +1812,7 @@
     <string name="audio_lang_media_default">Par défaut du média</string>
     <string name="essential_playback_header_title">Lecture</string>
     <string name="essential_playback_header_subtitle">Préférences simples de lecture, sous-titres, audio et P2P.</string>
-    <string name="essential_stream_selection_subtitle">Choisis manuellement ou lance automatiquement le premier flux disponible.</string>
+    <string name="essential_stream_selection_subtitle">Choisissez manuellement ou lancez automatiquement le premier flux disponible.</string>
     <string name="essential_autoplay_next_episode">Lecture automatique de l’épisode suivant</string>
     <string name="essential_autoplay_next_episode_subtitle">Enchaîne vers l’épisode suivant à la fin d’un flux.</string>
     <string name="essential_p2p_streams">Flux P2P</string>
@@ -2591,4 +2591,20 @@
     <string name="playback_net_http2">Activer HTTP/2</string>
     <string name="playback_net_http2_sub">Active le protocole HTTP/2 pour les connexions réseau, permettant le multiplexage des requêtes et des établissements de connexion plus rapides.</string>
     <string name="playback_estimated_memory_usage">Utilisation mémoire estimée&#8239;: %1$d / %2$d Mo</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">Nuvio se connecte à Premiumize pour l’authentification du compte, l’accès à la bibliothèque cloud, les vérifications de cache et les fonctions de lecture cloud. Nuvio n’est ni affilié à Premiumize ni approuvé par Premiumize.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">Nuvio se connecte à TorBox pour l’authentification du compte, l’accès à la bibliothèque cloud, les vérifications de cache et les fonctions de lecture cloud. Nuvio n’est ni affilié à TorBox ni approuvé par TorBox.</string>
+    <string name="debrid_formatter_reset_value">Réinitialiser</string>
+    <string name="debrid_selection_count_value">{{count}} sélectionné</string>
+    <string name="debrid_service_degraded">Le service Debrid est actuellement dégradé. Réessayez plus tard ou choisissez une autre source.</string>
+    <string name="debrid_stream_description_template_prompt">Modèle de description du flux</string>
+    <string name="debrid_stream_description_template_subtitle">Modèle utilisé pour générer les détails de la source Direct Debrid.</string>
+    <string name="debrid_stream_description_template_title">Modèle de description de flux</string>
+    <string name="debrid_stream_name_template_prompt">Modèle de nom de flux</string>
+    <string name="debrid_stream_name_template_subtitle">Modèle utilisé pour générer les noms de source Direct Debrid.</string>
+    <string name="debrid_stream_name_template_title">Modèle de nom de flux</string>
+    <string name="cloud_library_search_label">Rechercher dans la bibliothèque cloud</string>
+    <string name="cloud_library_search_placeholder">Rechercher des fichiers</string>
+    <string name="cloud_library_search_clear">Effacer la recherche</string>
 </resources>

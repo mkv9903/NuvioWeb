@@ -8,6 +8,7 @@ import { ThemeManager } from "../../ui/theme/themeManager.js";
 import { I18n } from "../../i18n/index.js";
 import { NuvioDialog } from "../../ui/components/nuvioDialog.js";
 import { detailWatchedEnrichmentService } from "../../data/repository/detailWatchedEnrichmentService.js";
+import { resolveExperienceRoute } from "./experienceModeRouting.js";
 import { Platform } from "../../platform/index.js";
 
 const PINNED_AVATAR_CATEGORIES = ["anime", "animation", "tv", "movie", "gaming"];
@@ -702,6 +703,16 @@ export const ProfileSelectionScreen = {
   },
 
   renderPinKeypad() {
+    const deleteIcon = `
+      <svg
+        class="profile-pin-delete-icon"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        focusable="false">
+        <path d="M20 5H9l-6 7 6 7h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1Z"></path>
+        <path d="m11 9 6 6m0-6-6 6"></path>
+      </svg>
+    `;
     const keys = [
       { value: "1", label: "1" },
       { value: "2", label: "2" },
@@ -712,19 +723,19 @@ export const ProfileSelectionScreen = {
       { value: "7", label: "7" },
       { value: "8", label: "8" },
       { value: "9", label: "9" },
-      { value: "delete", label: "⌫", ariaLabel: "Delete digit" },
+      { value: "delete", label: deleteIcon, ariaLabel: "Delete digit", isIcon: true },
       { value: "0", label: "0" }
     ];
     return keys
       .map(
-        ({ value, label, ariaLabel = label }) => `
+        ({ value, label, ariaLabel = label, isIcon = false }) => `
           <button
             class="profile-pin-key focusable"
             type="button"
             data-pin-key="${escapeHtml(value)}"
             data-focus-key="pin:${escapeHtml(value)}"
             aria-label="${escapeHtml(ariaLabel)}"
-            tabindex="0">${escapeHtml(label)}</button>
+            tabindex="0">${isIcon ? label : escapeHtml(label)}</button>
         `
       )
       .join("");
@@ -2101,7 +2112,12 @@ export const ProfileSelectionScreen = {
       await I18n.init();
       ThemeManager.apply();
       I18n.apply();
-      await Router.navigate("home", { forceReload: true });
+      const experienceRoute = await resolveExperienceRoute(profileId);
+      await Router.navigate(
+        experienceRoute,
+        experienceRoute === "home" ? { forceReload: true } : {},
+        experienceRoute === "home" ? {} : { replaceHistory: true, skipStackPush: true }
+      );
       void StartupSyncService.requestSyncNow().catch((error) => {
         console.warn("Profile background sync failed", error);
       });

@@ -2639,4 +2639,13 @@
     <string name="settings_content_discovery_plugins_subtitle">Gerir repositórios e fornecedores de streams</string>
     <string name="settings_stream_display_section">APRESENTAÇÃO</string>
     <string name="playback_estimated_memory_usage">Uso estimado de memória: %1$d / %2$d MB</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">O Nuvio liga-se ao Premiumize para autenticação de conta, acesso à biblioteca na nuvem, verificações de cache e funcionalidades de reprodução na nuvem. O Nuvio não é afiliado nem endossado pelo Premiumize.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">O Nuvio liga-se ao TorBox para autenticação de conta, acesso à biblioteca na nuvem, verificações de cache e funcionalidades de reprodução na nuvem. O Nuvio não é afiliado nem endossado pelo TorBox.</string>
+    <string name="debrid_selection_count_value">{{count}} selecionado</string>
+    <string name="debrid_service_degraded">O serviço Debrid está atualmente degradado. Tente novamente mais tarde ou escolha outra fonte.</string>
+    <string name="cloud_library_search_label">Pesquisar biblioteca na nuvem</string>
+    <string name="cloud_library_search_placeholder">Pesquisar arquivos</string>
+    <string name="cloud_library_search_clear">Limpar pesquisa</string>
 </resources>

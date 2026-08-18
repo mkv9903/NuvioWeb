@@ -461,10 +461,6 @@
     <string name="advanced_clear_cw_cache_done">Cache cleared</string>
     <string name="advanced_remember_last_profile">Remember Last Profile</string>
     <string name="advanced_remember_last_profile_subtitle">Remember last selected profile at startup</string>
-    <string name="advanced_strict_dpad_grid">Strict D-pad Grid Navigation</string>
-    <string name="advanced_strict_dpad_grid_subtitle">Keep directional focus movement aligned to rows and columns when possible.</string>
-    <string name="advanced_rotated_dpad">Rotated D-pad Mapping</string>
-    <string name="advanced_rotated_dpad_subtitle">Swap directional key mapping for simulators or remotes that report rotated arrows.</string>
     <string name="settings_debug">Debug</string>
     <string name="settings_debug_subtitle">Developer tools and feature flags</string>
     <string name="settings_plugins_section_subtitle">Manage repositories, providers, and plugin states</string>
@@ -493,9 +489,13 @@
     <string name="supporters_contributors_subtitle">The people backing Nuvio and the contributors building it across TV and mobile.</string>
     <string name="supporters_contributors_supporters_copy">Supporters and donators help keep the project moving, fund infrastructure, and make room for ambitious features.</string>
     <string name="supporters_contributors_donate_copy">Nuvio will stay free and open source. If you want to support the project, you can help cover the time and infrastructure behind it.</string>
+    <string name="supporters_contributors_donation_progress_title">This month’s server &amp; maintenance</string>
+    <string name="supporters_contributors_donation_progress_complete">Covered. Additional support now goes to development.</string>
+    <string name="supporters_contributors_donation_progress_remaining">After 100%, additional support goes to development.</string>
+    <string name="supporters_contributors_loading_donation_progress">Loading funding progress...</string>
     <string name="supporters_contributors_donate_button">Donate to Nuvio</string>
     <string name="supporters_contributors_qr_title">Scan to donate</string>
-    <string name="supporters_contributors_qr_subtitle">Open the link on your phone and support Nuvio through Ko-fi.</string>
+    <string name="supporters_contributors_qr_subtitle">Open the link on your phone to support Nuvio.</string>
     <string name="supporters_contributors_qr_hint">Point your camera at the QR code or use the button below.</string>
     <string name="supporters_contributors_back_button">Back to details</string>
     <string name="supporters_tab">Supporters</string>
@@ -1393,6 +1393,7 @@
     <string name="player_via">via %1$s</string>
     <string name="season_episode_format">S%1$d E%2$d</string>
     <string name="player_subtitle_delay">Subtitles Delay</string>
+    <string name="subtitle_delay_reset">Reset Delay</string>
     <string name="player_error_title">Playback Error</string>
     <string name="player_error_details">Playback error details</string>
     <string name="player_go_back">Go Back</string>
@@ -1647,6 +1648,9 @@
     <string name="cloud_library_playable_file_count">%1$d playable files</string>
     <string name="cloud_library_provider_all">All</string>
     <string name="cloud_library_refresh">Refresh cloud library</string>
+    <string name="cloud_library_search_clear">Clear search</string>
+    <string name="cloud_library_search_label">Search cloud library</string>
+    <string name="cloud_library_search_placeholder">Search files</string>
     <string name="cloud_library_select_provider">Select provider</string>
     <string name="cloud_library_select_type">Select type</string>
     <string name="cloud_library_status_ready">Ready to play</string>
@@ -2726,6 +2730,7 @@
     <string name="layout_cw_card_style_poster">Poster</string>
     <string name="layout_cw_sort_split_upcoming">Separate Upcoming Row</string>
     <string name="layout_cw_sort_split_upcoming_desc">Move unaired episodes to a separate Upcoming row</string>
+    <string name="upcoming_section_title">Upcoming</string>
     <string name="settings_card_depth_edge">Edge glow</string>
     <string name="settings_card_depth_edge_subtle">Subtle</string>
     <string name="settings_card_depth_edge_balanced">Balanced</string>
@@ -2780,4 +2785,9 @@
     <string name="debrid_selection_count_value">{{count}} selected</string>
     <string name="trakt_manual_code_description">A manual activation code will be shown here. No QR code is required.</string>
     <string name="licenses_attributions_simkl_body">Nuvio connects to Simkl for account authentication, watchlists, watched history, playback progress, and scrobbling. Movie, TV, and anime tracking data is provided by Simkl. Nuvio is not affiliated with or endorsed by Simkl.</string>
+    <string name="licenses_attributions_simkl_title">Simkl</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">Nuvio connects to Premiumize for account authentication, cloud library access, cache checks, and cloud playback features. Nuvio is not affiliated with or endorsed by Premiumize.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">Nuvio connects to TorBox for account authentication, cloud library access, cache checks, and cloud playback features. Nuvio is not affiliated with or endorsed by TorBox.</string>
 </resources>

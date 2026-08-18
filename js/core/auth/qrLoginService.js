@@ -3,7 +3,7 @@ import { Environment } from "../../platform/environment.js";
 import { SessionStore } from "../storage/sessionStore.js";
 import { AuthManager } from "./authManager.js";
 import { AuthState } from "./authState.js";
-import { proxyFetch } from "../network/httpClient.js";
+import { fetchSupabaseAuth } from "./supabaseAuthFetch.js";
 
 let lastError = null;
 
@@ -254,7 +254,7 @@ async function ensureQrSessionAuthenticated({ forceNewAnonymous = false } = {}) 
   };
 
   const tryAnonymousSignup = async () => {
-    const response = await proxyFetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    const response = await fetchSupabaseAuth("/auth/v1/signup", {
       method: "POST",
       headers: commonHeaders,
       body: JSON.stringify({
@@ -269,7 +269,7 @@ async function ensureQrSessionAuthenticated({ forceNewAnonymous = false } = {}) 
   };
 
   const tryAnonymousToken = async () => {
-    const response = await proxyFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=anonymous`, {
+    const response = await fetchSupabaseAuth("/auth/v1/token?grant_type=anonymous", {
       method: "POST",
       headers: commonHeaders,
       body: JSON.stringify({})
@@ -329,7 +329,7 @@ async function startRpc(deviceNonce, redirectBaseUrl, includeDeviceName = true) 
   }
 
   const response = await fetchWithCallerSessionRecovery(() =>
-    proxyFetch(`${SUPABASE_URL}/rest/v1/rpc/start_tv_login_session`, {
+    fetchSupabaseAuth("/rest/v1/rpc/start_tv_login_session", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -428,7 +428,7 @@ export const QrLoginService = {
         return null;
       }
       const response = await fetchWithCallerSessionRecovery(() =>
-        proxyFetch(`${SUPABASE_URL}/rest/v1/rpc/poll_tv_login_session`, {
+        fetchSupabaseAuth("/rest/v1/rpc/poll_tv_login_session", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -464,7 +464,7 @@ export const QrLoginService = {
         return false;
       }
       const response = await fetchWithCallerSessionRecovery(() =>
-        proxyFetch(`${SUPABASE_URL}/functions/v1/tv-logins-exchange`, {
+        fetchSupabaseAuth("/functions/v1/tv-logins-exchange", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

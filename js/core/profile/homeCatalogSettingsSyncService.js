@@ -1,4 +1,5 @@
 import { AuthManager } from "../auth/authManager.js";
+import { LocalStore } from "../storage/localStore.js";
 import { SessionStore } from "../storage/sessionStore.js";
 import { SupabaseApi } from "../../data/remote/supabase/supabaseApi.js";
 import { addonRepository } from "../../data/repository/addonRepository.js";
@@ -19,6 +20,7 @@ const HOME_CATALOG_LEGACY_SYNC_PLATFORMS = ["tv", "mobile"];
 const PUSH_DEBOUNCE_MS = 500;
 const HIDE_UNRELEASED_CONTENT_KEY = "hide_unreleased_content";
 const HIDE_CATALOG_UNDERLINE_KEY = "hide_catalog_underline";
+const PENDING_PUSH_TOKENS_KEY = "homeCatalogSettingsPendingPushTokens";
 
 function resolveProfileId(profileId = null) {
   const raw = Number(profileId ?? ProfileManager.getActiveProfileId() ?? 1);
@@ -77,6 +79,43 @@ function currentPullToken(profileId = null) {
   const userId =
     normalizeString(decodeJwtPayload(SessionStore.accessToken)?.sub) || "authenticated";
   return `${userId}:${resolveProfileId(profileId)}`;
+}
+
+function readPendingPushTokens() {
+  const value = LocalStore.get(PENDING_PUSH_TOKENS_KEY, {});
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function markPendingPush(token) {
+  if (!token) {
+    return;
+  }
+  const pending = readPendingPushTokens();
+  pending[token] = Math.max(Date.now(), Number(pending[token] || 0) + 1);
+  LocalStore.set(PENDING_PUSH_TOKENS_KEY, pending);
+}
+
+function clearPendingPush(token, expectedVersion = null) {
+  if (!token) {
+    return;
+  }
+  const pending = readPendingPushTokens();
+  if (!Object.prototype.hasOwnProperty.call(pending, token)) {
+    return;
+  }
+  if (expectedVersion != null && pending[token] !== expectedVersion) {
+    return;
+  }
+  delete pending[token];
+  LocalStore.set(PENDING_PUSH_TOKENS_KEY, pending);
+}
+
+function pendingPushVersion(token) {
+  if (!token) {
+    return null;
+  }
+  const value = readPendingPushTokens()[token];
+  return value == null ? null : value;
 }
 
 function normalizeStringArray(value) {
@@ -530,12 +569,24 @@ export const HomeCatalogSettingsSyncService = {
     const resolvedProfileId = resolveProfileId(profileId);
     const pullToken = currentPullToken(resolvedProfileId);
     try {
+      if (pendingPushVersion(pullToken) != null) {
+        this.completedInitialPullTokens.add(pullToken);
+        await this.push(resolvedProfileId);
+        return false;
+      }
       const localPayload = await buildLocalPayload(resolvedProfileId);
       const remote = await fetchBestRemotePayload(resolvedProfileId, localPayload);
       if (!remote || !(remote.payload.items || []).length) {
         if (pullToken) {
           this.completedInitialPullTokens.add(pullToken);
         }
+        return false;
+      }
+      // A local reorder can happen while the remote request is in flight. Do
+      // not let that older response replace the user's newer local choice.
+      if (pendingPushVersion(pullToken) != null) {
+        this.completedInitialPullTokens.add(pullToken);
+        await this.push(resolvedProfileId);
         return false;
       }
       if (payloadSignature(remote.payload) === payloadSignature(localPayload)) {
@@ -560,6 +611,8 @@ export const HomeCatalogSettingsSyncService = {
       return false;
     }
     const resolvedProfileId = resolveProfileId(profileId);
+    const pushToken = currentPullToken(resolvedProfileId);
+    const pendingVersion = pendingPushVersion(pushToken);
     if (this.isSyncingFromRemote(resolvedProfileId)) {
       return false;
     }
@@ -575,6 +628,7 @@ export const HomeCatalogSettingsSyncService = {
         },
         true
       );
+      clearPendingPush(pushToken, pendingVersion);
       return true;
     } catch (error) {
       console.warn("Home catalog settings sync push failed", error);
@@ -588,6 +642,7 @@ export const HomeCatalogSettingsSyncService = {
     }
     const resolvedProfileId = resolveProfileId(profileId);
     const pullToken = currentPullToken(resolvedProfileId);
+    markPendingPush(pullToken);
     if (!pullToken || !this.completedInitialPullTokens.has(pullToken)) {
       return;
     }

@@ -2689,4 +2689,22 @@
     <string name="tracking_trakt_progress_required">Dostępne gdy Trakt jest źródłem postępu oglądania</string>
     <string name="trakt_name">Trakt</string>
     <string name="licenses_attributions_simkl_body">Nuvio łączy się z Simkl w celu uwierzytelniania konta, list do obejrzenia, historii oglądania, postępu odtwarzania i scrobblowania. Dane śledzenia filmów, seriali i anime są dostarczane przez Simkl. Nuvio nie jest powiązane z Simkl ani przez niego wspierane.</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">Nuvio łączy się z Premiumize w celu uwierzytelniania konta, dostępu do biblioteki w chmurze, sprawdzania cache i odtwarzania z chmury. Nuvio nie jest powiązane z Premiumize ani przez nich wspierane.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">Nuvio łączy się z TorBox w celu uwierzytelniania konta, dostępu do biblioteki w chmurze, sprawdzania cache i odtwarzania z chmury. Nuvio nie jest powiązane z TorBox ani przez nich wspierane.</string>
+    <string name="licenses_attributions_simkl_title">Simkl</string>
+    <string name="debrid_formatter_reset_value">Zresetuj</string>
+    <string name="debrid_selection_count_value">Wybrano {{count}}</string>
+    <string name="debrid_service_degraded">Usługa Debrid jest obecnie ograniczona. Spróbuj ponownie później lub wybierz inne źródło.</string>
+    <string name="debrid_stream_description_template_prompt">Wzorzec opisu strumienia</string>
+    <string name="debrid_stream_description_template_subtitle">Wzorzec używany do generowania szczegółów źródła Direct Debrid.</string>
+    <string name="debrid_stream_description_template_title">Wzorzec opisu strumienia</string>
+    <string name="debrid_stream_name_template_prompt">Wzorzec nazwy strumienia</string>
+    <string name="debrid_stream_name_template_subtitle">Wzorzec używany do generowania nazw źródeł Direct Debrid.</string>
+    <string name="debrid_stream_name_template_title">Wzorzec nazwy strumienia</string>
+    <string name="cloud_library_search_label">Szukaj w bibliotece chmurowej</string>
+    <string name="cloud_library_search_placeholder">Wyszukaj pliki</string>
+    <string name="cloud_library_search_clear">Wyczyść wyszukiwanie</string>
+    <string name="upcoming_section_title">Nadchodzące</string>
 </resources>

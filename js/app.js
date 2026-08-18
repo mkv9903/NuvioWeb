@@ -11,6 +11,7 @@ import { DeviceSessionRegistration } from "./core/auth/deviceSessionRegistration
 import { ProfileManager } from "./core/profile/profileManager.js";
 import { ProfileSyncService } from "./core/profile/profileSyncService.js";
 import { StartupSyncService } from "./core/profile/startupSyncService.js";
+import { ProviderCredentialSyncService } from "./core/profile/providerCredentialSyncService.js";
 import { ThemeManager } from "./ui/theme/themeManager.js";
 import { renderAppShell } from "./bootstrap/renderAppShell.js";
 import { renderAddonRemotePage } from "./bootstrap/renderAddonRemotePage.js";
@@ -21,6 +22,12 @@ import { LocalStore } from "./core/storage/localStore.js";
 import { I18n } from "./i18n/index.js";
 import { getLatestAppUpdate } from "./core/update/appUpdateService.js";
 import { showAppUpdatePrompt } from "./ui/components/appUpdatePrompt.js";
+import { resolveExperienceRoute } from "./core/profile/experienceModeRouting.js";
+
+// These legacy Web-only overrides are no longer user settings. Navigation now
+// uses the stable grid algorithm and simulator detection automatically.
+LocalStore.remove("strictDpadGridNavigation");
+LocalStore.remove("rotatedDpadMapping");
 
 (function applyLegacyPatches() {
   const originalGetElementById = document.getElementById;
@@ -212,11 +219,14 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
       console.warn("Stream badge image prerender failed", error);
     });
   }
+  const experienceRoute = activeProfile ? await resolveExperienceRoute(activeProfile.id) : "home";
   const resumeRoute =
     restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
       ? Router.consumeWebOsResumeRoute()
       : null;
-  if (resumeRoute?.route) {
+  if (experienceRoute !== "home") {
+    await Router.navigate(experienceRoute, {}, { replaceHistory: true, skipStackPush: true });
+  } else if (resumeRoute?.route) {
     await Router.navigate(resumeRoute.route, resumeRoute.params || {}, {
       replaceHistory: true,
       skipStackPush: true
@@ -295,6 +305,7 @@ function setupWebOsAppLifecycle() {
       return;
     }
     void DeviceSessionRegistration.requestForegroundRegistration();
+    ProviderCredentialSyncService.requestForegroundPull();
     const current = Router.getCurrent();
     if (!current) {
       return;
@@ -304,7 +315,8 @@ function setupWebOsAppLifecycle() {
       if (document.body) {
         document.body.style.removeProperty("display");
       }
-      if (current === "debugConsole") {
+      const shouldReturnHome = !Router.isWebOsResumeRouteRestorable(current);
+      if (shouldReturnHome) {
         await Router.navigate(
           "home",
           {},
@@ -373,6 +385,39 @@ function setupWebOsAppLifecycle() {
   installNativeCallback(globalThis.PalmSystem, "PalmSystem", "ondeactivate");
 }
 
+function setupProviderCredentialForegroundLifecycle() {
+  let wasBackgrounded = document.visibilityState === "hidden" || document.webkitHidden === true;
+  const requestAfterBackground = () => {
+    if (!wasBackgrounded) return;
+    wasBackgrounded = false;
+    ProviderCredentialSyncService.requestForegroundPull();
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      wasBackgrounded = true;
+    } else if (document.visibilityState === "visible") {
+      requestAfterBackground();
+    }
+  });
+  document.addEventListener("webkitvisibilitychange", () => {
+    if (document.webkitHidden === true) {
+      wasBackgrounded = true;
+    } else {
+      requestAfterBackground();
+    }
+  });
+  window.addEventListener("pagehide", () => {
+    wasBackgrounded = true;
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event?.persisted) requestAfterBackground();
+  });
+  window.addEventListener("blur", () => {
+    wasBackgrounded = true;
+  });
+  window.addEventListener("focus", requestAfterBackground);
+}
+
 async function bootstrapApp() {
   markBootStage("Rendering application shell");
   renderAppShell();
@@ -388,6 +433,7 @@ async function bootstrapApp() {
   PlayerController.init();
 
   FocusEngine.init();
+  setupProviderCredentialForegroundLifecycle();
   setupWebOsAppLifecycle();
 
   ThemeManager.apply();
@@ -400,11 +446,13 @@ async function bootstrapApp() {
   AuthManager.subscribe((state) => {
     if (state === AuthState.LOADING) {
       StartupSyncService.stop();
+      ProviderCredentialSyncService.cancelForegroundPull();
       return;
     }
 
     if (state === AuthState.SIGNED_OUT) {
       StartupSyncService.stop();
+      ProviderCredentialSyncService.cancelForegroundPull();
       hasSelectedProfileThisSession = false;
       const shouldBypassQr = Boolean(LocalStore.get(GUEST_QR_BYPASS_KEY, false));
       if (isSignedOutRouteAllowed()) {

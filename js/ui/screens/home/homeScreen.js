@@ -870,6 +870,13 @@ function buildYoutubeEmbedUrl(videoId, { muted = true } = {}) {
       proxyUrl.searchParams.set("playsinline", "1");
       proxyUrl.searchParams.set("rel", "0");
       proxyUrl.searchParams.set("cc_load_policy", "0");
+      if (Platform.isWebOS()) {
+        // Home previews do not need the controllable IFrame API. On webOS it
+        // commonly reaches the same direct-embed fallback only after the
+        // proxy watchdog expires, keeping the trailer hidden for several
+        // seconds after the focused poster has already expanded.
+        proxyUrl.searchParams.set("direct", "1");
+      }
       proxyUrl.searchParams.set("_cb", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
       return proxyUrl.toString();
     } catch (_) {
@@ -1146,9 +1153,17 @@ function parseEpisodeReleaseDateForContinueWatching(released) {
   if (!raw) {
     return null;
   }
-  const exactTime = Date.parse(raw);
-  if (Number.isFinite(exactTime)) {
-    return exactTime;
+  // Only a strict ISO 8601 date-time parses identically across engines, so keep
+  // its exact time. For any other string, use the extracted ISO date portion:
+  // Date.parse on non-ISO / space separated / locale date strings is
+  // implementation and timezone dependent, and on some TV browsers resolved a
+  // day or more off, which made Continue Watching treat episodes as aired
+  // before their real release date.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) {
+    const exactTime = Date.parse(raw);
+    if (Number.isFinite(exactTime)) {
+      return exactTime;
+    }
   }
   const datePortion = raw.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
   const parsedTime = datePortion ? Date.parse(datePortion) : NaN;
@@ -1259,9 +1274,14 @@ function sortContinueWatchingItemsForDisplay(items = [], mode = "default") {
     .trim()
     .toLowerCase();
   if (normalizedMode !== "streaming_style") {
-    return [...items].sort(
+    const sorted = [...items].sort(
       (left, right) => continueWatchingSortTimestamp(right) - continueWatchingSortTimestamp(left)
     );
+    if (normalizedMode !== "split_upcoming") {
+      return sorted;
+    }
+    const { main, upcoming } = partitionContinueWatchingRows(sorted, normalizedMode);
+    return [...main, ...upcoming];
   }
 
   const released = [];
@@ -1293,6 +1313,34 @@ function sortContinueWatchingItemsForDisplay(items = [], mode = "default") {
   });
 
   return [...released, ...unreleased];
+}
+
+function partitionContinueWatchingRows(items = [], mode = "default") {
+  const normalizedMode = String(mode || "default")
+    .trim()
+    .toLowerCase();
+  if (normalizedMode !== "split_upcoming") {
+    return { main: [...items], upcoming: [] };
+  }
+
+  const main = [];
+  const upcoming = [];
+  (items || []).forEach((item) => {
+    if (item?.isNextUp && item?.hasAired === false) {
+      upcoming.push(item);
+    } else {
+      main.push(item);
+    }
+  });
+  upcoming.sort((left, right) => {
+    const leftTime = nextUpReleaseTimestamp(left);
+    const rightTime = nextUpReleaseTimestamp(right);
+    if (leftTime == null && rightTime == null) return 0;
+    if (leftTime == null) return 1;
+    if (rightTime == null) return -1;
+    return leftTime - rightTime;
+  });
+  return { main, upcoming };
 }
 
 function shouldShowNextUpEpisodeForContinueWatching(
@@ -2186,7 +2234,7 @@ function renderContinueWatchingCard(item, index, options = {}) {
              tabindex="0"
              data-nav-zone="main"
              data-nav-row="0"
-             data-nav-col="${index}"
+             data-nav-col="${Number(options?.navIndex ?? index)}"
              data-nav-row-key="${escapeAttribute(rowKey)}"
              data-action="resumeProgress"
              data-cw-index="${index}"
@@ -2245,6 +2293,7 @@ export function renderContinueWatchingSection(items = [], options = {}) {
     return "";
   }
   const rowKey = String(options?.rowKey || "").trim();
+  const startIndex = Math.max(0, Number(options?.startIndex || 0));
   const loadingCount = Math.max(
     1,
     Math.min(10, Number(options?.loadingCount || items.length || 3))
@@ -2262,13 +2311,18 @@ export function renderContinueWatchingSection(items = [], options = {}) {
   return `
     <section class="home-row home-row-continue home-row-continue-${cardStyle}"${rowKey ? ` data-row-key="${escapeAttribute(rowKey)}"` : ""}>
       <div class="home-row-head">
-        <h2 class="home-row-title">${escapeHtml(t("home.continueWatching", {}, "Continue Watching"))}</h2>
+        <h2 class="home-row-title">${escapeHtml(t(options?.titleKey || "home.continueWatching", {}, options?.title || "Continue Watching"))}</h2>
       </div>
       <div class="home-track home-track-continue"${rowKey ? ` data-track-row-key="${escapeAttribute(rowKey)}"` : ""}>
         ${
           renderedItems.length
             ? renderedItems
-                .map((item, index) => renderContinueWatchingCard(item, index, cardOptions))
+                .map((item, index) =>
+                  renderContinueWatchingCard(item, startIndex + index, {
+                    ...cardOptions,
+                    navIndex: index
+                  })
+                )
                 .join("")
             : Array.from({ length: loadingCount }, (_, index) =>
                 renderContinueWatchingLoadingCard(index, rowKey)
@@ -2879,12 +2933,16 @@ export const HomeScreen = {
     } catch (_) {}
   },
 
-  rememberContinueWatchingReturnFocus(index = null) {
-    const cards = this.getNavigationRowNodes("continue_watching");
+  rememberContinueWatchingReturnFocus(index = null, rowKey = "") {
+    const currentCard = this.getCurrentFocusedNode()?.closest?.(".home-continue-card") || null;
+    const targetRowKey =
+      String(rowKey || this.getNodeRowKey(currentCard) || "continue_watching").trim() ||
+      "continue_watching";
+    const cards = this.getNavigationRowNodes(targetRowKey);
     const preferredIndex = Number(index);
     const target = Number.isFinite(preferredIndex)
       ? cards[Math.max(0, Math.min(cards.length - 1, preferredIndex))] || null
-      : this.getCurrentFocusedNode()?.closest?.(".home-continue-card") || null;
+      : currentCard;
     if (target instanceof HTMLElement) {
       this.rememberReturnFocusForNode(target);
       return;
@@ -3548,7 +3606,10 @@ export const HomeScreen = {
     if (Platform.isTizen()) {
       return 1600;
     }
-    if (this.isLegacyTvRuntime()) {
+    // The configured focused-poster delay already settles focus before this
+    // flow starts. Android begins resolving its preview during that dwell, so
+    // adding another delay after expansion only makes webOS visibly later.
+    if (Platform.isWebOS()) {
       return 0;
     }
     if (this.isPerformanceConstrained()) {
@@ -4161,7 +4222,9 @@ export const HomeScreen = {
     }
     if (node.dataset.cwIndex != null) {
       return normalizeContinueWatchingItem(
-        this.continueWatchingDisplay?.[Number(node.dataset.cwIndex)] || null
+        this.continueWatchingRenderedItems?.[Number(node.dataset.cwIndex)] ||
+          this.continueWatchingDisplay?.[Number(node.dataset.cwIndex)] ||
+          null
       );
     }
     if (node.dataset.rowIndex != null && node.dataset.itemIndex != null) {
@@ -4179,9 +4242,18 @@ export const HomeScreen = {
     if (focusState.focusKind === "hero") {
       return this.heroItem || this.heroCandidates?.[0] || null;
     }
-    if (String(focusState.rowKey || "") === "continue_watching") {
+    if (
+      String(focusState.rowKey || "") === "continue_watching" ||
+      String(focusState.rowKey || "") === "upcoming_section"
+    ) {
       const index = Math.max(0, Number(focusState.itemIndex || 0));
-      return normalizeContinueWatchingItem(this.continueWatchingDisplay?.[index] || null);
+      const rows = partitionContinueWatchingRows(
+        this.continueWatchingDisplay || [],
+        this.layoutPrefs?.continueWatchingSortMode
+      );
+      const rowItems =
+        String(focusState.rowKey || "") === "upcoming_section" ? rows.upcoming : rows.main;
+      return normalizeContinueWatchingItem(rowItems[index] || null);
     }
     const row =
       (this.rows || []).find((entry) => {
@@ -4200,7 +4272,10 @@ export const HomeScreen = {
       return null;
     }
     return normalizeContinueWatchingItem(
-      this.continueWatchingDisplay?.[index] || this.continueWatching?.[index] || null
+      this.continueWatchingRenderedItems?.[index] ||
+        this.continueWatchingDisplay?.[index] ||
+        this.continueWatching?.[index] ||
+        null
     );
   },
 
@@ -4316,6 +4391,9 @@ export const HomeScreen = {
         0,
         Number(this.continueWatchingMenu.index || 0)
       );
+      this.pendingContinueWatchingFocusRowKey = String(
+        this.continueWatchingMenu.rowKey || "continue_watching"
+      );
     }
     this.continueWatchingMenu = null;
     this.restoreContinueWatchingMenuFocus();
@@ -4398,7 +4476,8 @@ export const HomeScreen = {
 
   restoreContinueWatchingMenuFocus() {
     this.unlockHomeHoldFocus();
-    const cards = this.getNavigationRowNodes("continue_watching");
+    const rowKey = String(this.pendingContinueWatchingFocusRowKey || "continue_watching");
+    const cards = this.getNavigationRowNodes(rowKey);
     const target =
       cards[
         Math.max(0, Math.min(cards.length - 1, Number(this.pendingContinueWatchingFocusIndex || 0)))
@@ -4406,6 +4485,7 @@ export const HomeScreen = {
       cards[cards.length - 1] ||
       null;
     this.pendingContinueWatchingFocusIndex = null;
+    this.pendingContinueWatchingFocusRowKey = null;
     if (!target) {
       return;
     }
@@ -4792,7 +4872,8 @@ export const HomeScreen = {
     this.continueWatchingMenu = {
       contentId: item.contentId,
       videoId: item.videoId || "",
-      index: Number(node?.dataset?.cwIndex || 0),
+      index: Number(node?.dataset?.navCol || 0),
+      rowKey: this.getNodeRowKey(node) || "continue_watching",
       optionIndex: 0,
       item
     };
@@ -4806,6 +4887,9 @@ export const HomeScreen = {
     this.pendingContinueWatchingFocusIndex = Math.max(
       0,
       Number(this.continueWatchingMenu.index || 0)
+    );
+    this.pendingContinueWatchingFocusRowKey = String(
+      this.continueWatchingMenu.rowKey || "continue_watching"
     );
     this.continueWatchingMenu = null;
     this.destroyHomeHoldDialog();
@@ -4994,9 +5078,10 @@ export const HomeScreen = {
     }
     const normalized = normalizeContinueWatchingItem(item);
     const anchorIndex = Number(this.continueWatchingMenu?.index);
+    const anchorRowKey = String(this.continueWatchingMenu?.rowKey || "");
     this.cancelPendingContinueWatchingEnter();
     this.destroyHomeHoldDialog();
-    this.rememberContinueWatchingReturnFocus(anchorIndex);
+    this.rememberContinueWatchingReturnFocus(anchorIndex, anchorRowKey);
     this.continueWatchingMenu = null;
     this.holdMenuScrollState = null;
 
@@ -5029,8 +5114,9 @@ export const HomeScreen = {
       return false;
     }
     const anchorIndex = Number(this.continueWatchingMenu?.index);
+    const anchorRowKey = String(this.continueWatchingMenu?.rowKey || "");
     this.cancelPendingContinueWatchingEnter();
-    this.rememberContinueWatchingReturnFocus(anchorIndex);
+    this.rememberContinueWatchingReturnFocus(anchorIndex, anchorRowKey);
     this.continueWatchingMenu = null;
     this.holdMenuScrollState = null;
     this.destroyHomeHoldDialog({
@@ -5167,6 +5253,7 @@ export const HomeScreen = {
       return false;
     }
     const anchorIndex = Math.max(0, Number(this.continueWatchingMenu?.index || 0));
+    const anchorRowKey = String(this.continueWatchingMenu?.rowKey || "continue_watching");
     if (option.action === "resume") {
       return this.openContinueWatchingFromItem(item);
     }
@@ -5187,6 +5274,7 @@ export const HomeScreen = {
     this.destroyHomeHoldDialog();
     this.continueWatchingMenu = null;
     this.pendingContinueWatchingFocusIndex = anchorIndex;
+    this.pendingContinueWatchingFocusRowKey = anchorRowKey;
     this.holdMenuScrollState = null;
     this.unlockHomeHoldFocus();
     this.render();
@@ -5415,7 +5503,7 @@ export const HomeScreen = {
       if (buildHeroIdentity(currentHero) !== scheduledHeroIdentity) {
         return;
       }
-      requestAnimationFrame(async () => {
+      requestAnimationFrame(() => {
         if (Number(this.heroFocusToken || 0) !== focusToken) {
           return;
         }
@@ -5427,34 +5515,22 @@ export const HomeScreen = {
         if (!latestHero || buildHeroIdentity(latestHero) !== scheduledHeroIdentity) {
           return;
         }
-        if (shouldEnrichModernHero(latestHero)) {
-          void this.enrichCurrentHeroAsync(latestHero, focusToken, { deferCommit: true });
-          return;
-        }
-        await preloadModernHeroAssets(latestHero);
-        if (Number(this.heroFocusToken || 0) !== focusToken) {
-          return;
-        }
-        const settledFocusedNode = this.getCurrentFocusedNode();
-        if (
-          settledFocusedNode !== node ||
-          !node?.isConnected ||
-          !node.classList.contains("focused")
-        ) {
-          return;
-        }
-        const settledHero = this.getNodeHeroSource(node);
-        if (!settledHero || buildHeroIdentity(settledHero) !== scheduledHeroIdentity) {
-          return;
-        }
-        this.heroItem = settledHero;
+        // Keep the hero copy synchronized with the settled focus immediately.
+        // Backdrop/logo swaps already preload and guard their own async work, so
+        // waiting for those assets here leaves the previous movie visible on
+        // slower TV engines. Metadata enrichment can safely refine this item
+        // afterward while its focus token is still current.
+        this.heroItem = latestHero;
         const matchedIndex = this.heroCandidates.findIndex(
-          (item) => String(item?.id || "") === String(settledHero.id || "")
+          (item) => String(item?.id || "") === String(latestHero.id || "")
         );
         if (matchedIndex >= 0) {
           this.heroIndex = matchedIndex;
         }
         this.applyHeroToDom();
+        if (shouldEnrichModernHero(latestHero)) {
+          void this.enrichCurrentHeroAsync(latestHero, focusToken, { deferCommit: true });
+        }
       });
     }, delay);
   },
@@ -7534,21 +7610,24 @@ export const HomeScreen = {
     const domVersion = Number(this.navigationDomVersion || 0);
 
     if (this.layoutMode === "modern") {
-      const continueTrack = this.container?.querySelector(".home-row-continue .home-track");
-      if (continueTrack) {
+      const continueTracks = Array.from(
+        this.container?.querySelectorAll(".home-row-continue .home-track") || []
+      );
+      continueTracks.forEach((continueTrack) => {
         const continueNodes = Array.from(
           continueTrack.querySelectorAll(".home-content-card.focusable")
         );
         if (continueNodes.length) {
+          const section = continueTrack.closest(".home-row-continue") || null;
+          const rowKey = String(section?.dataset?.rowKey || "");
           rows.push(continueNodes);
           tracks.push(continueTrack);
-          rowSectionByKey.set(
-            "continue_watching",
-            continueTrack.closest(".home-row-continue") || null
-          );
-          rowNodesByRowKey.set("continue_watching", continueNodes);
+          if (rowKey) {
+            rowSectionByKey.set(rowKey, section);
+            rowNodesByRowKey.set(rowKey, continueNodes);
+          }
         }
-      }
+      });
       const rowSections = Array.from(this.container?.querySelectorAll(".home-modern-row") || []);
       rowSections.forEach((section) => {
         const track = section.querySelector(".home-track");
@@ -7848,6 +7927,11 @@ export const HomeScreen = {
         if (!target || !this.container?.contains(target) || target.classList.contains("focused")) {
           return;
         }
+        // Match Android TV: while the expanded sidebar owns navigation, pointer
+        // hover must not transfer focus to content behind it.
+        if (this.sidebarExpanded || this.isSidebarFocusActive()) {
+          return;
+        }
         this.setFocusedNode(target, { suppressDelegatedFocus: true });
         if (this.isMainNode(target)) {
           this.lastMainFocus = target;
@@ -7862,6 +7946,14 @@ export const HomeScreen = {
         const main = this.getHomeViewport();
         const target = event?.target;
         if (!(target instanceof HTMLElement) || !main?.contains(target)) {
+          return;
+        }
+        // LG Magic Remote wheel events scroll the hovered element natively.
+        // Consume them while the sidebar owns navigation so the background
+        // remains fixed, matching Android TV's blocked content input.
+        if (this.sidebarExpanded || this.isSidebarFocusActive()) {
+          event.preventDefault?.();
+          event.stopPropagation?.();
           return;
         }
         this.cancelPendingHeroFocus();
@@ -7881,7 +7973,7 @@ export const HomeScreen = {
     this.container.addEventListener("focusin", this.boundHomeFocusInHandler);
     this.container.addEventListener("click", this.boundHomeClickHandler);
     this.container.addEventListener("mouseover", this.boundHomeMouseOverHandler);
-    this.container.addEventListener("wheel", this.boundHomeWheelHandler, { passive: true });
+    this.container.addEventListener("wheel", this.boundHomeWheelHandler, { passive: false });
     this.boundHomeEventContainer = this.container;
   },
 
@@ -7945,6 +8037,7 @@ export const HomeScreen = {
     this.posterHoldMenu = null;
     this.posterListPicker = null;
     this.pendingContinueWatchingFocusIndex = null;
+    this.pendingContinueWatchingFocusRowKey = null;
     this.suppressHoldMenuEnterUntilKeyUp = false;
     this.cancelPendingContinueWatchingEnter();
     this.forceInitialContinueWatchingFocus = false;
@@ -8867,17 +8960,31 @@ export const HomeScreen = {
       (!this.homeHoldFocusLocked && retainedFocusState && retainedFocusState.focusKind === "item"
         ? retainedFocusState
         : null);
+    const continueWatchingRows = partitionContinueWatchingRows(
+      this.continueWatchingDisplay || [],
+      this.layoutPrefs?.continueWatchingSortMode
+    );
+    this.continueWatchingRenderedItems = [
+      ...continueWatchingRows.main,
+      ...continueWatchingRows.upcoming
+    ];
+    const splitUpcomingEnabled =
+      String(this.layoutPrefs?.continueWatchingSortMode || "") === "split_upcoming";
     const continueWatchingFocusIndex =
       String(focusState?.rowKey || "") === "continue_watching"
         ? Math.max(0, Number(focusState?.itemIndex || 0))
-        : -1;
-    const continueWatchingRenderLimit = Math.min(
-      Number(this.continueWatchingDisplay?.length || 0),
-      Math.max(
-        this.getContinueWatchingRenderBatchSize(),
-        continueWatchingFocusIndex >= 0 ? continueWatchingFocusIndex + 1 : 0
-      )
-    );
+        : String(focusState?.rowKey || "") === "upcoming_section"
+          ? continueWatchingRows.main.length + Math.max(0, Number(focusState?.itemIndex || 0))
+          : -1;
+    const continueWatchingRenderLimit = splitUpcomingEnabled
+      ? continueWatchingRows.main.length
+      : Math.min(
+          Number(this.continueWatchingDisplay?.length || 0),
+          Math.max(
+            this.getContinueWatchingRenderBatchSize(),
+            continueWatchingFocusIndex >= 0 ? continueWatchingFocusIndex + 1 : 0
+          )
+        );
     const focusedPosterFlowConfig = this.getFocusedPosterFlowConfig(this.layoutPrefs || {});
     const expandFocusedPoster =
       this.layoutMode === "modern" &&
@@ -8910,7 +9017,8 @@ export const HomeScreen = {
         rows: this.rows,
         heroItem,
         heroCandidates: this.heroCandidates,
-        continueWatchingItems: this.continueWatchingDisplay || [],
+        continueWatchingItems: continueWatchingRows.main,
+        upcomingItems: continueWatchingRows.upcoming,
         continueWatchingLoading: Boolean(this.continueWatchingLoading),
         continueWatchingLoadingCount: effectiveContinueWatchingLoadingCount,
         continueWatchingRenderLimit,
@@ -8939,11 +9047,21 @@ export const HomeScreen = {
       this.catalogSeeAllMap = modernLayoutPayload.catalogSeeAllMap;
       mainContentMarkup = modernLayoutPayload.markup;
     } else {
-      const continueHtml = renderContinueWatchingSection(this.continueWatchingDisplay || [], {
+      const continueHtml = renderContinueWatchingSection(continueWatchingRows.main, {
         rowKey: "continue_watching",
         loading: Boolean(this.continueWatchingLoading),
         loadingCount: effectiveContinueWatchingLoadingCount,
         itemLimit: continueWatchingRenderLimit,
+        useEpisodeThumbnails: this.layoutPrefs?.useEpisodeThumbnailsInCw !== false,
+        blurNextUp: resolveContinueWatchingBlurNextUp(this.layoutPrefs),
+        cardStyle: this.layoutPrefs?.continueWatchingCardStyle || "card"
+      });
+      const upcomingHtml = renderContinueWatchingSection(continueWatchingRows.upcoming, {
+        rowKey: "upcoming_section",
+        titleKey: "upcoming_section_title",
+        title: "Upcoming",
+        startIndex: continueWatchingRows.main.length,
+        itemLimit: continueWatchingRows.upcoming.length,
         useEpisodeThumbnails: this.layoutPrefs?.useEpisodeThumbnailsInCw !== false,
         blurNextUp: resolveContinueWatchingBlurNextUp(this.layoutPrefs),
         cardStyle: this.layoutPrefs?.continueWatchingCardStyle || "card"
@@ -8963,6 +9081,7 @@ export const HomeScreen = {
       mainContentMarkup = `
         ${showHeroSection ? renderHeroMarkup(this.layoutMode, heroItem, this.heroCandidates) : ""}
         ${continueHtml}
+        ${upcomingHtml}
         ${this.layoutMode === "grid" ? '<div class="home-grid-sticky" id="homeGridSticky"></div>' : ""}
         <section class="home-catalogs${this.layoutMode === "grid" ? " home-grid-catalogs" : ""}" id="homeCatalogRows">${legacyRowsPayload.markup}</section>
       `;
@@ -9087,9 +9206,8 @@ export const HomeScreen = {
       !backFocusState &&
       Number.isFinite(this.pendingContinueWatchingFocusIndex)
     ) {
-      const cards = Array.from(
-        this.container?.querySelectorAll(".home-row-continue .home-content-card.focusable") || []
-      );
+      const pendingRowKey = String(this.pendingContinueWatchingFocusRowKey || "continue_watching");
+      const cards = this.getNavigationRowNodes(pendingRowKey);
       const target =
         cards[
           Math.max(
@@ -9100,6 +9218,7 @@ export const HomeScreen = {
         cards[cards.length - 1] ||
         null;
       this.pendingContinueWatchingFocusIndex = null;
+      this.pendingContinueWatchingFocusRowKey = null;
       if (target) {
         restoredFocus = true;
         this.setFocusedNode(target);
@@ -9200,6 +9319,21 @@ export const HomeScreen = {
   },
 
   scheduleHomeLazyImageHydration(anchorNode = null, { refreshIndex = false } = {}) {
+    const anchorRow =
+      anchorNode instanceof HTMLElement ? anchorNode.closest(HOME_LAZY_IMAGE_ROW_SELECTOR) : null;
+    if (
+      anchorRow instanceof HTMLElement &&
+      anchorRow === this.lastHomeLazyImageHydrationAnchorRow &&
+      !refreshIndex &&
+      !this.homeLazyImageHydrationNeedsFullScan &&
+      !this.homeLazyImageHydrationNeedsIndexRefresh &&
+      !this.homeLazyImageHydrationRaf
+    ) {
+      // A focused-row pass hydrates every image in that row. Avoid scheduling
+      // another animation-frame callback for horizontal D-pad moves until the
+      // DOM, viewport, or focused row changes.
+      return;
+    }
     if (anchorNode instanceof HTMLElement) {
       this.pendingHomeLazyImageAnchor = anchorNode;
     } else {
@@ -10405,6 +10539,9 @@ export const HomeScreen = {
   // ---------------------------------------------------------------------------
 
   appendContinueWatchingBatch() {
+    if (String(this.layoutPrefs?.continueWatchingSortMode || "") === "split_upcoming") {
+      return false;
+    }
     const track = this.container?.querySelector(".home-track-continue");
     const items = Array.isArray(this.continueWatchingDisplay) ? this.continueWatchingDisplay : [];
     if (!track?.isConnected || !items.length) {
@@ -10459,6 +10596,9 @@ export const HomeScreen = {
   },
 
   ensureContinueWatchingRenderAhead(target, { force = false } = {}) {
+    if (String(this.layoutPrefs?.continueWatchingSortMode || "") === "split_upcoming") {
+      return false;
+    }
     if (!target?.matches?.(".home-continue-card.focusable")) {
       return false;
     }
@@ -10486,6 +10626,9 @@ export const HomeScreen = {
 
   setupContinueWatchingProgressiveRendering() {
     this.teardownContinueWatchingProgressiveRendering();
+    if (String(this.layoutPrefs?.continueWatchingSortMode || "") === "split_upcoming") {
+      return;
+    }
     const track = this.container?.querySelector(".home-track-continue");
     if (!track) {
       return;

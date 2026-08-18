@@ -16,7 +16,8 @@ class CatalogRepository {
     type,
     skip = 0,
     extraArgs = {},
-    supportsSkip = true
+    supportsSkip = true,
+    signal = null
   }) {
     const cacheKey = this.buildCacheKey({
       addonId,
@@ -43,7 +44,7 @@ class CatalogRepository {
     });
 
     return safeApiCall(() =>
-      CatalogApi.getCatalog(url).then((dto) => {
+      CatalogApi.getCatalog(url, signal ? { signal } : {}).then((dto) => {
         const items = (dto?.metas || []).map((meta) => ({
           ...this.mapMeta(meta),
           addonBaseUrl,

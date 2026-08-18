@@ -4,6 +4,7 @@ import { LocalStore } from "../../core/storage/localStore.js";
 const KEY = "layoutPreferences";
 
 const DEFAULTS = {
+  hasChosenLayout: false,
   homeLayout: "modern",
   continueWatchingCardStyle: "card",
   heroSectionEnabled: true,
@@ -51,6 +52,13 @@ function normalizeContinueWatchingSortMode(value) {
   const normalized = String(value || "default")
     .trim()
     .toLowerCase();
+  if (
+    normalized === "split_upcoming" ||
+    normalized === "split-upcoming" ||
+    normalized === "splitupcoming"
+  ) {
+    return "split_upcoming";
+  }
   return normalized === "streaming_style" ||
     normalized === "streaming-style" ||
     normalized === "streamingstyle"
@@ -73,6 +81,10 @@ function normalizeLayoutPreferences(value = {}) {
 
   return {
     ...merged,
+    hasChosenLayout:
+      typeof value?.hasChosenLayout === "boolean"
+        ? value.hasChosenLayout
+        : Object.keys(value || {}).length > 0,
     continueWatchingCardStyle: ["card", "wide", "poster"].includes(continueWatchingCardStyle)
       ? continueWatchingCardStyle
       : "card",

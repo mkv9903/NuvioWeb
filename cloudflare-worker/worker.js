@@ -42,17 +42,21 @@ export default {
     newHeaders.delete("x-proxy-token"); // Don't forward the proxy token to the target
     // Cloudflare Workers runtime sets the correct Host header from targetUrl automatically.
 
+    const hasBody = request.method !== "GET" && request.method !== "HEAD";
     const proxyRequest = new Request(targetUrl, {
       method: request.method,
       headers: newHeaders,
-      body: request.body
+      body: hasBody ? request.body : undefined
     });
 
     try {
       const response = await fetch(proxyRequest);
 
-      // We must construct a new Response to ensure we can modify headers safely
-      const proxyResponse = new Response(response.body, {
+      // 204, 205, and 304 responses must not have a body in WHATWG Response constructor
+      const hasResponseBody =
+        response.status !== 204 && response.status !== 205 && response.status !== 304;
+
+      const proxyResponse = new Response(hasResponseBody ? response.body : null, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers

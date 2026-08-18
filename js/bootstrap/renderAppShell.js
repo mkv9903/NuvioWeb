@@ -2,6 +2,8 @@ const APP_SHELL = `
   <div id="app">
     <div id="account" class="screen"></div>
     <div id="profileSelection" class="screen"></div>
+    <div id="experienceModeSelection" class="screen"></div>
+    <div id="essentialAddonSetup" class="screen"></div>
     <div id="home" class="screen"></div>
     <div id="detail" class="screen"></div>
     <div id="stream" class="screen"></div>
@@ -15,6 +17,7 @@ const APP_SHELL = `
     <div id="debugConsole" class="screen"></div>
     <div id="trakt" class="screen"></div>
     <div id="supportersContributors" class="screen"></div>
+    <div id="licensesAttributions" class="screen"></div>
     <div id="plugin" class="screen"></div>
     <div id="plugins" class="screen"></div>
     <div id="catalogOrder" class="screen"></div>

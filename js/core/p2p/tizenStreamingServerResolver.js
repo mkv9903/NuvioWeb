@@ -331,6 +331,12 @@ function buildResolvedStream(
     sources,
     mimeType
   };
+  const behaviorHints = {
+    ...(stream.raw?.behaviorHints || {}),
+    ...(stream.behaviorHints || {}),
+    filename:
+      filename || stream.behaviorHints?.filename || stream.raw?.behaviorHints?.filename || null
+  };
   return {
     ...stream,
     infoHash,
@@ -340,16 +346,14 @@ function buildResolvedStream(
     mimeType,
     sourceType: mimeType,
     tizenP2p: p2p,
-    behaviorHints: {
-      ...(stream.behaviorHints || {}),
-      filename: filename || stream.behaviorHints?.filename || null
-    },
+    behaviorHints,
     raw: {
       ...(stream.raw || stream),
       tizenP2p: p2p,
       mimeType,
       sourceType: mimeType,
-      type: mimeType
+      type: mimeType,
+      behaviorHints
     }
   };
 }

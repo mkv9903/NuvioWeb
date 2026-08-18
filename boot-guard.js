@@ -10,7 +10,6 @@
   }
 
   var OVERLAY_ID = "nuvio-boot-error";
-  var WATCHDOG_MS = 25000;
   var COMPATIBILITY_INFO_TIMEOUT_MS = 1500;
   var DEFAULT_COMPATIBILITY_MESSAGES = {
     unsupported_device_title: "TV not supported",
@@ -55,39 +54,12 @@
   ];
   var active = true;
   var lastStage = "Loading startup files";
-  var watchdogId = 0;
-
-  function scheduleWatchdog() {
-    if (!active) {
-      return;
-    }
-    if (watchdogId) {
-      window.clearTimeout(watchdogId);
-    }
-    watchdogId = window.setTimeout(function onBootTimeout() {
-      watchdogId = 0;
-      if (active) {
-        showError(
-          "The application is taking too long to start.",
-          "Restart the app. If the problem continues, photograph this screen and report the code and stage.",
-          "BOOT-TIMEOUT"
-        );
-      }
-    }, WATCHDOG_MS);
-  }
 
   function text(value) {
     if (value === undefined || value === null || value === "") {
       return "Unavailable";
     }
     return String(value);
-  }
-
-  function stopWatchdog() {
-    if (watchdogId) {
-      window.clearTimeout(watchdogId);
-      watchdogId = 0;
-    }
   }
 
   function parseJson(value) {
@@ -305,7 +277,6 @@
     }
 
     removeOverlay();
-    stopWatchdog();
 
     overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
@@ -654,7 +625,6 @@
     stage: function stage(name) {
       if (active && name) {
         lastStage = String(name);
-        scheduleWatchdog();
       }
     },
 
@@ -668,7 +638,6 @@
 
     ready: function ready() {
       active = false;
-      stopWatchdog();
       removeOverlay();
     },
 
@@ -710,6 +679,4 @@
       }
     });
   }
-
-  scheduleWatchdog();
 })(window, document);

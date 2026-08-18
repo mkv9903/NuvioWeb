@@ -2375,4 +2375,16 @@
     <string name="subtitle_outline_color_subtitle">Цвет обводки субтитров.</string>
     <string name="subtitle_text_color_subtitle">Цвет текста субтитров.</string>
     <string name="player_error_web_headers_unsupported">Этот источник несовместим с плеером данного устройства, так как требует специальных заголовков запроса. Попробуйте другой источник или обратитесь к разработчику дополнения.</string>
+    <string name="debrid_formatter_reset_value">Сбросить</string>
+    <string name="debrid_selection_count_value">{{count}} выбран</string>
+    <string name="debrid_service_degraded">Служба Debrid в настоящее время работает неэффективно. Повторите попытку позже или выберите другой источник.</string>
+    <string name="debrid_stream_description_template_prompt">Шаблон описания потока</string>
+    <string name="debrid_stream_description_template_subtitle">Шаблон, используемый для создания сведений об источнике Direct Debrid.</string>
+    <string name="debrid_stream_description_template_title">Шаблон описания потока</string>
+    <string name="debrid_stream_name_template_prompt">Шаблон имени потока</string>
+    <string name="debrid_stream_name_template_subtitle">Шаблон, используемый для создания имен источников Direct Debrid.</string>
+    <string name="debrid_stream_name_template_title">Шаблон имени потока</string>
+    <string name="cloud_library_search_label">Поиск в облачной библиотеке</string>
+    <string name="cloud_library_search_placeholder">Поиск файлов</string>
+    <string name="cloud_library_search_clear">Очистить поиск</string>
 </resources>

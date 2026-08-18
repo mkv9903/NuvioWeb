@@ -13,6 +13,9 @@ import { SettingsScreen } from "../screens/settings/settingsScreen.js";
 import { ConsoleDebugScreen } from "../screens/debug/consoleDebugScreen.js";
 import { TraktScreen } from "../screens/trakt/traktScreen.js";
 import { SupportersContributorsScreen } from "../screens/supporters/supportersContributorsScreen.js";
+import { ExperienceModeSelectionScreen } from "../screens/onboarding/experienceModeSelectionScreen.js";
+import { EssentialAddonSetupScreen } from "../screens/onboarding/essentialAddonSetupScreen.js";
+import { LicensesAttributionsScreen } from "../screens/settings/licensesAttributionsScreen.js";
 import { PluginScreen } from "../screens/plugin/pluginScreen.js";
 import { PluginsScreen } from "../screens/plugin/pluginsScreen.js";
 import { CatalogOrderScreen } from "../screens/plugin/catalogOrderScreen.js";
@@ -47,7 +50,9 @@ const NON_BACKSTACK_ROUTES = new Set([
   "profileSelection",
   "authQrSignIn",
   "authSignIn",
-  "syncCode"
+  "syncCode",
+  "experienceModeSelection",
+  "essentialAddonSetup"
 ]);
 const WEBOS_RESUME_ROUTE_KEY = "webos_last_resume_route";
 const WEBOS_RESUME_ROUTE_TTL_MS = 20 * 60 * 1000;
@@ -55,6 +60,9 @@ const TIZEN_ROUTE_RETURN_BACK_GUARD_MS = 700;
 const WEBOS_NON_RESTORABLE_ROUTES = new Set([
   ...NON_BACKSTACK_ROUTES,
   "debugConsole",
+  "plugin",
+  "plugins",
+  "catalogOrder",
   "player",
   "stream"
 ]);
@@ -81,6 +89,8 @@ export const Router = {
     authSignIn: AuthSignInScreen,
     syncCode: SyncCodeScreen,
     profileSelection: ProfileSelectionScreen,
+    experienceModeSelection: ExperienceModeSelectionScreen,
+    essentialAddonSetup: EssentialAddonSetupScreen,
     detail: MetaDetailsScreen,
     library: LibraryScreen,
     search: SearchScreen,
@@ -89,6 +99,7 @@ export const Router = {
     debugConsole: ConsoleDebugScreen,
     trakt: TraktScreen,
     supportersContributors: SupportersContributorsScreen,
+    licensesAttributions: LicensesAttributionsScreen,
     plugin: PluginScreen,
     plugins: PluginsScreen,
     catalogOrder: CatalogOrderScreen,
@@ -272,12 +283,17 @@ export const Router = {
     return true;
   },
 
+  isWebOsResumeRouteRestorable(routeName = this.current) {
+    const route = String(routeName || "").trim();
+    return Boolean(route && this.routes[route] && !WEBOS_NON_RESTORABLE_ROUTES.has(route));
+  },
+
   persistWebOsResumeRoute(routeName = this.current, params = this.currentParams) {
     if (!Platform.isWebOS()) {
       return;
     }
     const route = String(routeName || "").trim();
-    if (!route || !this.routes[route] || WEBOS_NON_RESTORABLE_ROUTES.has(route)) {
+    if (!this.isWebOsResumeRouteRestorable(route)) {
       LocalStore.remove(WEBOS_RESUME_ROUTE_KEY);
       return;
     }
@@ -304,8 +320,7 @@ export const Router = {
     const savedAt = Number(snapshot.savedAt || 0);
     if (
       !route ||
-      !this.routes[route] ||
-      WEBOS_NON_RESTORABLE_ROUTES.has(route) ||
+      !this.isWebOsResumeRouteRestorable(route) ||
       !Number.isFinite(savedAt) ||
       Date.now() - savedAt > WEBOS_RESUME_ROUTE_TTL_MS
     ) {

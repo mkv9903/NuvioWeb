@@ -45,6 +45,40 @@ function isProxyableSupabaseUrl(value = "") {
   }
 }
 
+function isProxyableDebridAuthUrl(value = "", method = "GET") {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname;
+    if (parsed.protocol !== "https:") return false;
+    const normalizedMethod = String(method || "GET").toUpperCase();
+    const authTarget =
+      (host === "api.torbox.app" &&
+        path === "/v1/api/user/auth/device/start" &&
+        normalizedMethod === "GET") ||
+      (host === "api.torbox.app" &&
+        path === "/v1/api/user/auth/device/token" &&
+        normalizedMethod === "POST") ||
+      (host === "www.premiumize.me" && path === "/token" && normalizedMethod === "POST");
+    const cloudTarget =
+      normalizedMethod === "GET" &&
+      ((host === "api.torbox.app" &&
+        [
+          "/v1/api/torrents/mylist",
+          "/v1/api/usenet/mylist",
+          "/v1/api/webdl/mylist",
+          "/v1/api/torrents/requestdl",
+          "/v1/api/usenet/requestdl",
+          "/v1/api/webdl/requestdl"
+        ].includes(path)) ||
+        (host === "www.premiumize.me" &&
+          ["/api/item/listall", "/api/item/details"].includes(path)));
+    return authTarget || cloudTarget;
+  } catch (_) {
+    return false;
+  }
+}
+
 function serializeBody(body) {
   if (body == null) {
     return null;
@@ -110,4 +144,25 @@ export async function fetchViaWebOsSupabaseProxy(url, fetchOptions = {}) {
     return serviceResponse;
   }
   return null;
+}
+
+export async function fetchViaWebOsDebridAuthProxy(url, fetchOptions = {}) {
+  if (!isProxyableDebridAuthUrl(url, fetchOptions.method || "GET")) return null;
+  const body = serializeBody(fetchOptions.body);
+  if (fetchOptions.body != null && body == null) return null;
+  if (!Environment.isWebOS() || !isWebOsCompanionServiceAvailable()) return null;
+
+  const serviceResult = await withTimeout(
+    requestWebOsCompanionService({
+      method: "safeHttpProxy",
+      parameters: {
+        url: String(url || ""),
+        method: fetchOptions.method || "GET",
+        headers: fetchOptions.headers || {},
+        body
+      }
+    }),
+    WEBOS_SUPABASE_PROXY_REQUEST_TIMEOUT_MS
+  ).catch(() => null);
+  return buildResponseFromServicePayload(serviceResult?.payload);
 }

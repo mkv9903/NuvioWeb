@@ -41,6 +41,7 @@ const KEY_ALIASES = {
   "common.normal": "player_speed_normal",
   "common.notSet": "mdblist_not_set",
   "common.off": "subtitle_off",
+  "common.retry": "action_retry",
   "common.save": "action_save",
   "common.systemDefault": "appearance_language_system",
   "sidebar.addons": "nav_addons",

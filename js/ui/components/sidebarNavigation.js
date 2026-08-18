@@ -216,13 +216,18 @@ function scheduleRootSidebarTextFit(container) {
 
 function getSelectedItem(routeName = "") {
   return (
-    ROOT_SIDEBAR_ITEMS.find((item) => item.route === String(routeName || "")) ||
-    ROOT_SIDEBAR_ITEMS[0]
+    [...ROOT_SIDEBAR_ITEMS, DISCOVER_SIDEBAR_ITEM].find(
+      (item) => item.route === String(routeName || "")
+    ) || ROOT_SIDEBAR_ITEMS[0]
   );
 }
 
 function getItemForAction(action = "") {
-  return ROOT_SIDEBAR_ITEMS.find((item) => item.action === String(action || "")) || null;
+  return (
+    [...ROOT_SIDEBAR_ITEMS, DISCOVER_SIDEBAR_ITEM].find(
+      (item) => item.action === String(action || "")
+    ) || null
+  );
 }
 
 function getModernSidebarPresentation(selectedRoute = "") {

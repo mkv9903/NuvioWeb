@@ -547,11 +547,12 @@ async function batchEnrichProgressItems(items) {
       meta = cached.meta;
     } else {
       const canonicalType = item.contentType === "series" ? "series" : "movie";
-      meta = await withTimeout(
+      const result = await withTimeout(
         metaRepository.getMetaFromAllAddons(canonicalType, lookupId),
         PROGRESS_META_TIMEOUT_MS,
         null
       ).catch(() => null);
+      meta = result?.status === "success" && result?.data ? result.data : null;
       // Only cache real metadata. Caching a null (timeout/miss) would leave the
       // item unenriched for the full TTL after a single slow response.
       if (meta) {

@@ -10,6 +10,7 @@ import { PluginSyncService } from "./pluginSyncService.js";
 import { ProfileSettingsSyncService } from "./profileSettingsSyncService.js";
 import { TraktCredentialSyncService } from "./traktCredentialSyncService.js";
 import { SimklCredentialSyncService } from "./simklCredentialSyncService.js";
+import { ProviderCredentialSyncService } from "./providerCredentialSyncService.js";
 import { SimklSyncService } from "../../data/repository/simklSyncService.js";
 import { CollectionSyncService } from "./collectionSyncService.js";
 import { HomeCatalogSettingsSyncService } from "./homeCatalogSettingsSyncService.js";
@@ -140,6 +141,7 @@ export const StartupSyncService = {
         }
         await TraktCredentialSyncService.pullFromRemote(ProfileManager.getActiveProfileId());
         await SimklCredentialSyncService.pullFromRemote(ProfileManager.getActiveProfileId());
+        await ProviderCredentialSyncService.syncFromRemote(ProfileManager.getActiveProfileId());
         await SimklSyncService.refresh().catch((error) => {
           console.warn("Simkl automatic refresh failed", error);
         });

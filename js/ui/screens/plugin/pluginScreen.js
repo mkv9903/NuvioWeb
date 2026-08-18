@@ -5,6 +5,12 @@ import { LibrarySyncService } from "../../../core/profile/librarySyncService.js"
 import { addonRepository } from "../../../data/repository/addonRepository.js";
 import { Platform } from "../../../platform/index.js";
 import { QrCodeGenerator } from "../../../core/qr/qrCodeGenerator.js";
+import { ExperienceModeStore } from "../../../data/local/experienceModeStore.js";
+import { I18n } from "../../../i18n/index.js";
+
+function t(key, fallback) {
+  return I18n.t(key, {}, { fallback });
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -60,7 +66,8 @@ export const PluginScreen = {
       addonCount: addonUrls.length,
       authenticated: AuthManager.isAuthenticated,
       syncStatus: LibrarySyncService.getLastPullStatus(),
-      phoneManagerUrl: await getPhoneManagerUrl()
+      phoneManagerUrl: await getPhoneManagerUrl(),
+      isEssential: ExperienceModeStore.isEssential()
     };
   },
 
@@ -193,7 +200,9 @@ export const PluginScreen = {
     this.actionMap = new Map();
     this.setRowColumns(0, [0]);
     this.setRowColumns(1, [0]);
-    this.setRowColumns(2, [0]);
+    if (!this.model.isEssential) {
+      this.setRowColumns(2, [0]);
+    }
 
     this.actionMap.set("manage_from_phone", async () => {
       await this.openQrOverlay();
@@ -215,9 +224,19 @@ export const PluginScreen = {
           <main class="home-main addons-main addons-main-centered">
             <div class="addons-panel addons-panel-centered">
               <section class="addons-hero-card">
-                <h1 class="addons-title addons-title-centered">Addons</h1>
+                <h1 class="addons-title addons-title-centered">${escapeHtml(t("addon_title", "Addons"))}</h1>
                 <p class="addons-lede">
-                  Manage addons and home catalogs from your phone.
+                  ${escapeHtml(
+                    this.model.isEssential
+                      ? t(
+                          "addon_manage_addons_only_from_phone_subtitle",
+                          "Scan a QR code to install or remove add-ons from your phone"
+                        )
+                      : t(
+                          "addon_manage_from_phone_subtitle",
+                          "Scan a QR code to manage addons, catalogs, and collections from your phone"
+                        )
+                  )}
                 </p>
                 <p class="addons-meta">${escapeHtml(`${this.model.addonCount} addon${this.model.addonCount === 1 ? "" : "s"} currently linked`)}</p>
                 <p class="addons-sync-status">${escapeHtml(this.buildSyncStatusText())}</p>
@@ -230,14 +249,27 @@ export const PluginScreen = {
                      tabindex="-1">
                   <span class="addons-large-row-icon material-icons" aria-hidden="true">qr_code_2</span>
                   <span class="addons-large-row-copy">
-                    <strong>Manage from phone</strong>
-                    <small>Scan a QR code to manage addons, catalogs, and collections from your phone</small>
+                    <strong>${escapeHtml(t("addon_manage_from_phone_title", "Manage from phone"))}</strong>
+                    <small>${escapeHtml(
+                      this.model.isEssential
+                        ? t(
+                            "addon_manage_addons_only_from_phone_subtitle",
+                            "Scan a QR code to install or remove add-ons from your phone"
+                          )
+                        : t(
+                            "addon_manage_from_phone_subtitle",
+                            "Scan a QR code to manage addons, catalogs, and collections from your phone"
+                          )
+                    )}</small>
                   </span>
                   <span class="addons-large-row-tail-group">
                     <span class="addons-large-row-tail material-icons" aria-hidden="true">phone_android</span>
                   </span>
                 </div>
-                <div role="button"
+                ${
+                  this.model.isEssential
+                    ? ""
+                    : `<div role="button"
                      class="addons-large-row addons-large-row-centered addons-focusable"
                      data-zone="content"
                      data-row="1"
@@ -246,25 +278,26 @@ export const PluginScreen = {
                      tabindex="-1">
                   <span class="addons-large-row-icon material-icons" aria-hidden="true">tune</span>
                   <span class="addons-large-row-copy">
-                    <strong>Reorder &amp; hide catalogs</strong>
-                    <small>Change the order of home rows and hide catalogs you don't want shown</small>
+                    <strong>${escapeHtml(t("addon_reorder_title", "Reorder home catalogs"))}</strong>
+                    <small>${escapeHtml(t("addon_reorder_subtitle", "Controls catalog and collection row order on Home"))}</small>
                   </span>
                   <span class="addons-large-row-tail-group">
                     <span class="addons-large-row-tail material-icons" aria-hidden="true">chevron_right</span>
                   </span>
-                </div>
+                </div>`
+                }
                 <div role="button"
                      class="addons-large-row addons-large-row-centered addons-focusable"
                      data-zone="content"
-                     data-row="2"
+                     data-row="${this.model.isEssential ? 1 : 2}"
                      data-col="0"
                      data-action-id="refresh_addons"
                      tabindex="-1"
                      aria-disabled="${this.syncing ? "true" : "false"}">
                   <span class="addons-large-row-icon material-icons" aria-hidden="true">${this.syncing ? "hourglass_top" : "sync"}</span>
                   <span class="addons-large-row-copy">
-                    <strong>${this.syncing ? "Refreshing..." : "Refresh addons"}</strong>
-                    <small>Re-check your account for addons you enabled on your phone</small>
+                    <strong>${escapeHtml(this.syncing ? t("addon_refresh_action", "Refreshing…") : t("addon_refresh_action", "Refresh Addons"))}</strong>
+                    <small>${escapeHtml(t("addon_refresh_default_subtitle", "Pull latest addon changes for current profile"))}</small>
                   </span>
                   <span class="addons-large-row-tail-group">
                     <span class="addons-large-row-tail material-icons" aria-hidden="true">refresh</span>
@@ -279,12 +312,22 @@ export const PluginScreen = {
             ? `
           <div class="addons-qr-overlay">
             <div class="addons-qr-dialog">
-              <p class="addons-qr-instruction">Scan with your phone to manage addons, catalogs, and collections</p>
+              <p class="addons-qr-instruction">${escapeHtml(
+                this.model.isEssential
+                  ? t(
+                      "addon_qr_addons_only_scan_instruction",
+                      "Scan with your phone to install or remove add-ons"
+                    )
+                  : t(
+                      "addon_qr_scan_instruction",
+                      "Scan with your phone to manage addons, catalogs, and collections"
+                    )
+              )}</p>
               <canvas class="addons-qr-canvas" width="440" height="440" aria-label="QR code"></canvas>
               <p class="addons-qr-url">${escapeHtml(this.model.phoneManagerUrl)}</p>
               <div role="button" class="addons-qr-close addons-focusable focused" data-action-id="close_qr_overlay" tabindex="-1">
                 <span class="material-icons" aria-hidden="true">close</span>
-                <span>Close</span>
+                <span>${escapeHtml(t("addon_qr_close", "Close"))}</span>
               </div>
             </div>
           </div>

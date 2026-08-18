@@ -1,7 +1,5 @@
-import { LocalStore } from "../core/storage/localStore.js";
 import { LayoutPreferences } from "../data/local/layoutPreferences.js";
 
-export const ROTATED_DPAD_KEY = "rotatedDpadMapping";
 export const FAST_HORIZONTAL_NAVIGATION_KEY = "fastHorizontalNavigationEnabled";
 
 export function getArrowCodeFromKey(key) {
@@ -78,10 +76,6 @@ function isSimulator() {
 }
 
 export function shouldUseRotatedMapping() {
-  const stored = LocalStore.get(ROTATED_DPAD_KEY, null);
-  if (typeof stored === "boolean") {
-    return stored;
-  }
   return isSimulator();
 }
 

@@ -20,6 +20,8 @@ const WEBOS_AUDIO_TRACK_SELECTION_TIMEOUT_MS = 4000;
 const AVPLAY_BUFFER_FOR_PLAY_SECONDS = 5;
 const AVPLAY_BUFFER_FOR_RESUME_SECONDS = 4;
 const AVPLAY_BUFFERING_TIMEOUT_SECONDS = 10;
+const HLS_TRANSIENT_LEVEL_404_RETRY_LIMIT = 2;
+const HLS_TRANSIENT_LEVEL_404_RETRY_BASE_DELAY_MS = 1500;
 
 function logEngineFsDebug(...args) {
   if (globalThis.__NUVIO_DEBUG_ENGINEFS__) {
@@ -105,6 +107,7 @@ export const PlayerController = {
   desiredAvPlayAudioTrackIndex: -1,
   desiredAvPlayAudioTrackUntil: 0,
   pendingAvPlaySubtitleTrackIndex: -1,
+  pendingAvPlaySubtitleReactivation: false,
   desiredAvPlaySubtitleTrackIndex: -1,
   desiredAvPlaySubtitleTrackUntil: 0,
   avplaySubtitleSelectionToken: 0,
@@ -121,6 +124,7 @@ export const PlayerController = {
   avplayDurationMs: 0,
   avplayTrackSyncAt: 0,
   lastPlaybackErrorCode: 0,
+  lastHlsErrorDiagnostic: null,
   currentPlaybackUrl: "",
   currentPlaybackHeaders: {},
   currentPlaybackMediaSourceType: null,
@@ -150,6 +154,10 @@ export const PlayerController = {
   startupPresentationAudioMuted: false,
   desiredPlaybackRate: 1,
   appliedAvPlayPlaybackRate: 1,
+  appliedWebOsPlaybackRate: 1,
+  webOsPlaybackRateRequestToken: 0,
+  webOsPlaybackRateCommandPromise: null,
+  webOsPlaybackRateReapplyPromise: null,
 
   isExpectedPlayInterruption(error) {
     const message = String(error?.message || "").toLowerCase();
@@ -518,6 +526,10 @@ export const PlayerController = {
   resetNativeMediaState() {
     this.nativeMediaId = "";
     this.nativeMediaIdLookupToken = Number(this.nativeMediaIdLookupToken || 0) + 1;
+    this.webOsPlaybackRateRequestToken = Number(this.webOsPlaybackRateRequestToken || 0) + 1;
+    this.appliedWebOsPlaybackRate = 1;
+    this.webOsPlaybackRateCommandPromise = null;
+    this.webOsPlaybackRateReapplyPromise = null;
     this.cancelWebOsAudioTrackSelection();
     this.selectedWebOsEmbeddedAudioTrackIndex = -1;
     this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
@@ -1270,23 +1282,51 @@ export const PlayerController = {
   },
 
   getCurrentAvPlaySubtitleTrackIndex() {
-    const avplay = this.getAvPlay();
-    if (
-      !avplay ||
-      typeof avplay.getCurrentStreamInfo !== "function" ||
-      this.avplaySubtitlesSilent
-    ) {
+    if (this.avplaySubtitlesSilent) {
       return -1;
+    }
+    return this.getAvPlaySubtitleDiagnosticSnapshot().canonicalTrackIndex;
+  },
+
+  getAvPlaySubtitleDiagnosticSnapshot() {
+    const avplay = this.getAvPlay();
+    const snapshot = {
+      state: this.getAvPlayState(),
+      rawTrackIndex: -1,
+      canonicalTrackIndex: -1
+    };
+    if (!avplay || typeof avplay.getCurrentStreamInfo !== "function") {
+      return snapshot;
     }
     try {
       const streams = avplay.getCurrentStreamInfo();
       const text = Array.isArray(streams)
         ? streams.find((track) => this.normalizeAvPlayTrackType(track?.type) === "TEXT")
         : null;
-      return this.resolveAvPlaySubtitleTrackIndex(Number(text?.index));
-    } catch (_) {
-      return -1;
+      const rawTrackIndex = Number(text?.index);
+      snapshot.rawTrackIndex = Number.isFinite(rawTrackIndex) ? rawTrackIndex : -1;
+      snapshot.canonicalTrackIndex = this.resolveAvPlaySubtitleTrackIndex(rawTrackIndex);
+    } catch (error) {
+      snapshot.error = error?.message || String(error || "");
     }
+    return snapshot;
+  },
+
+  logAvPlaySubtitleDiagnostic(stage, detail = {}) {
+    if (!Platform.isTizen() || !this.isUsingAvPlay()) {
+      return;
+    }
+    console.warn("[Nuvio AVPlay subtitle trace]", {
+      stage,
+      ...detail,
+      current: this.getAvPlaySubtitleDiagnosticSnapshot(),
+      outputDisabled: Boolean(this.avplaySubtitlesSilent),
+      renderMode: this.avplaySubtitleRenderMode,
+      nativeRendering: Boolean(this.avplayNativeSubtitleRendering),
+      selectedTrackIndex: Number(this.selectedAvPlaySubtitleTrackIndex),
+      pendingTrackIndex: Number(this.pendingAvPlaySubtitleTrackIndex),
+      desiredTrackIndex: Number(this.desiredAvPlaySubtitleTrackIndex)
+    });
   },
 
   clearAvPlayExternalSubtitlePath() {
@@ -1324,7 +1364,7 @@ export const PlayerController = {
 
   trySelectAvPlaySubtitleTrackIndex(
     trackIndex,
-    { nudge = false, renderMode = this.avplaySubtitleRenderMode } = {}
+    { nudge = false, reactivate = false, renderMode = this.avplaySubtitleRenderMode } = {}
   ) {
     const avplay = this.getAvPlay();
     const targetIndex = Number(trackIndex);
@@ -1345,10 +1385,13 @@ export const PlayerController = {
       return false;
     }
     const mode = normalizeAvPlaySubtitleRenderMode(renderMode);
+    // Keep the proven 0.3.31 decoder re-arm for startup and ordinary track
+    // changes. When returning from Off/an addon, keep the requested renderer
+    // active throughout selection so the reactivation retries do not switch
+    // AVPlay back through the state that already failed on affected TVs.
+    const preselectSilent = reactivate ? mode === "html" : mode === "native";
     try {
-      // Re-arm AVPlay's subtitle decoder before selecting. Selecting the same
-      // TEXT track is otherwise a no-op after subtitles were disabled.
-      avplay.setSilentSubtitle?.(mode === "native");
+      avplay.setSilentSubtitle?.(preselectSilent);
     } catch (_) {
       // Track selection can still succeed when this toggle is unavailable.
     }
@@ -1366,6 +1409,13 @@ export const PlayerController = {
         error: error?.message || String(error || "")
       });
       this.applyAvPlaySubtitleRenderMode(mode);
+      this.logAvPlaySubtitleDiagnostic("select-error", {
+        targetIndex,
+        mode,
+        reactivate: Boolean(reactivate),
+        preselectSilent,
+        error: error?.message || String(error || "")
+      });
       return false;
     }
     this.applyAvPlaySubtitleRenderMode(mode);
@@ -1377,6 +1427,12 @@ export const PlayerController = {
     logTizenAvPlayDebug("Tizen AVPlay subtitle selection requested", {
       state: this.getAvPlayState(),
       targetIndex
+    });
+    this.logAvPlaySubtitleDiagnostic("select-issued", {
+      targetIndex,
+      mode,
+      reactivate: Boolean(reactivate),
+      preselectSilent
     });
     return true;
   },
@@ -1396,7 +1452,11 @@ export const PlayerController = {
       this.applyAvPlaySubtitleRenderMode(renderMode);
       return true;
     }
-    const attempted = this.trySelectAvPlaySubtitleTrackIndex(canonicalIndex, { nudge, renderMode });
+    const attempted = this.trySelectAvPlaySubtitleTrackIndex(canonicalIndex, {
+      nudge,
+      reactivate: force,
+      renderMode
+    });
     return attempted || this.getCurrentAvPlaySubtitleTrackIndex() === canonicalIndex;
   },
 
@@ -1702,6 +1762,7 @@ export const PlayerController = {
     const targetIndex = Number(trackIndex);
     if (!Number.isFinite(targetIndex) || targetIndex < 0) {
       this.pendingAvPlaySubtitleTrackIndex = -1;
+      this.pendingAvPlaySubtitleReactivation = false;
       this.desiredAvPlaySubtitleTrackIndex = -1;
       this.desiredAvPlaySubtitleTrackUntil = Date.now() + 5000;
       this.clearAvPlayExternalSubtitlePath();
@@ -1715,6 +1776,9 @@ export const PlayerController = {
       this.avplayNativeSubtitleRendering = false;
       this.selectedAvPlaySubtitleTrackIndex = -1;
       this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
+      this.logAvPlaySubtitleDiagnostic("disabled", {
+        selectionToken
+      });
       this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
       return true;
     }
@@ -1738,8 +1802,16 @@ export const PlayerController = {
       shouldDeferUntilPlay,
       subtitleTracks: this.avplaySubtitleTracks
     });
+    this.logAvPlaySubtitleDiagnostic("requested", {
+      selectionToken,
+      targetIndex: canonicalIndex,
+      mode: this.avplaySubtitleRenderMode,
+      reactivate: shouldForceSubtitleReactivation,
+      canApplyNow
+    });
     if (!canApplyNow || shouldDeferUntilPlay) {
       this.pendingAvPlaySubtitleTrackIndex = canonicalIndex;
+      this.pendingAvPlaySubtitleReactivation = shouldForceSubtitleReactivation;
       this.selectedAvPlaySubtitleTrackIndex = canonicalIndex;
       this.avplaySubtitlesSilent = false;
       this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
@@ -1750,12 +1822,14 @@ export const PlayerController = {
     try {
       if (
         !this.trySelectAvPlaySubtitleTrackIndex(canonicalIndex, {
+          reactivate: shouldForceSubtitleReactivation,
           renderMode: this.avplaySubtitleRenderMode
         })
       ) {
         throw new Error("setSelectTrack failed");
       }
       this.pendingAvPlaySubtitleTrackIndex = -1;
+      this.pendingAvPlaySubtitleReactivation = false;
     } catch (error) {
       logTizenAvPlayDebug("Tizen AVPlay subtitle track request failed", {
         state,
@@ -1791,6 +1865,7 @@ export const PlayerController = {
 
   applyPendingAvPlaySubtitleTrackSelection() {
     const pendingIndex = Number(this.pendingAvPlaySubtitleTrackIndex);
+    const pendingReactivation = Boolean(this.pendingAvPlaySubtitleReactivation);
     const desiredIndex = Number(this.desiredAvPlaySubtitleTrackIndex);
     const desiredActive =
       Number.isFinite(desiredIndex) &&
@@ -1813,11 +1888,17 @@ export const PlayerController = {
     }
 
     try {
-      if (!this.retryAvPlaySubtitleTrackSelection(canonicalIndex)) {
+      if (
+        !this.retryAvPlaySubtitleTrackSelection(canonicalIndex, {
+          force: pendingReactivation,
+          renderMode: this.avplaySubtitleRenderMode
+        })
+      ) {
         throw new Error("setSelectTrack failed");
       }
       if (Number.isFinite(pendingIndex) && pendingIndex === canonicalIndex) {
         this.pendingAvPlaySubtitleTrackIndex = -1;
+        this.pendingAvPlaySubtitleReactivation = false;
       }
       this.selectedAvPlaySubtitleTrackIndex = canonicalIndex;
       this.desiredAvPlaySubtitleTrackIndex = canonicalIndex;
@@ -1861,6 +1942,7 @@ export const PlayerController = {
         // Ignore subtitle mute/unmute failures.
       }
       this.pendingAvPlaySubtitleTrackIndex = -1;
+      this.pendingAvPlaySubtitleReactivation = false;
       this.desiredAvPlaySubtitleTrackIndex = -1;
       this.desiredAvPlaySubtitleTrackUntil = 0;
       this.avplayNativeSubtitleRendering = false;
@@ -2217,6 +2299,7 @@ export const PlayerController = {
     this.desiredAvPlayAudioTrackIndex = -1;
     this.desiredAvPlayAudioTrackUntil = 0;
     this.pendingAvPlaySubtitleTrackIndex = -1;
+    this.pendingAvPlaySubtitleReactivation = false;
     this.desiredAvPlaySubtitleTrackIndex = -1;
     this.desiredAvPlaySubtitleTrackUntil = 0;
     this.avplaySubtitleSelectionToken = Number(this.avplaySubtitleSelectionToken || 0) + 1;
@@ -2271,7 +2354,10 @@ export const PlayerController = {
 
   configureAvPlayBuffering() {
     const avplay = this.getAvPlay();
-    if (!avplay) {
+    if (!avplay || Platform.isTizen()) {
+      // Match Stremio's Tizen AVPlay path: leave buffering thresholds and the
+      // timeout to Samsung's model-specific defaults. Small fixed buffers can
+      // make high-bitrate REMUX playback repeatedly drain and resume.
       return;
     }
 
@@ -2619,6 +2705,98 @@ export const PlayerController = {
 
   getLastPlaybackErrorCode() {
     return Number(this.lastPlaybackErrorCode || 0);
+  },
+
+  sanitizePlaybackDiagnosticText(value, maxLength = 240) {
+    const text = String(value ?? "")
+      .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted-url]")
+      .replace(
+        /((?:clear_?key|clearkey|api_password|authorization|cookie|token)=)[^&\s]+/gi,
+        "$1[redacted]"
+      )
+      .replace(
+        /((?:clear_?key|clearkey|api_password|authorization|cookie|token)\s*:\s*)(?:"[^"]*"|'[^']*'|[^,;\s}]+)/gi,
+        "$1[redacted]"
+      )
+      .trim();
+    if (!text) {
+      return "";
+    }
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+  },
+
+  captureHlsErrorDiagnostic(data = {}) {
+    const video = this.video || null;
+    const buffered = [];
+    try {
+      for (let index = 0; index < Number(video?.buffered?.length || 0); index += 1) {
+        buffered.push(
+          `${Number(video.buffered.start(index)).toFixed(3)}-${Number(
+            video.buffered.end(index)
+          ).toFixed(3)}`
+        );
+      }
+    } catch (_) {
+      // Buffered ranges are best-effort diagnostics only.
+    }
+
+    const fragment = data?.frag || null;
+    const responseCode = Number(data?.response?.code || data?.networkDetails?.status || 0);
+    const mediaErrorCode = Number(video?.error?.code || 0);
+    const diagnostic = {
+      fatal: Boolean(data?.fatal),
+      type: this.sanitizePlaybackDiagnosticText(data?.type),
+      details: this.sanitizePlaybackDiagnosticText(data?.details),
+      reason: this.sanitizePlaybackDiagnosticText(data?.reason),
+      error: this.sanitizePlaybackDiagnosticText(data?.error?.message || data?.error?.name),
+      sourceBuffer: this.sanitizePlaybackDiagnosticText(
+        data?.sourceBufferName || data?.parent || fragment?.type
+      ),
+      responseCode: responseCode || null,
+      level: Number.isFinite(Number(data?.level ?? fragment?.level))
+        ? Number(data?.level ?? fragment?.level)
+        : null,
+      fragmentSn:
+        fragment?.sn == null ? null : this.sanitizePlaybackDiagnosticText(fragment.sn, 80),
+      fragmentCc: Number.isFinite(Number(fragment?.cc)) ? Number(fragment.cc) : null,
+      readyState: Number(video?.readyState || 0),
+      networkState: Number(video?.networkState || 0),
+      currentTime: Number.isFinite(Number(video?.currentTime))
+        ? Number(Number(video.currentTime).toFixed(3))
+        : null,
+      buffered: buffered.join(", ") || "none",
+      mediaErrorCode: mediaErrorCode || null,
+      mediaError: this.sanitizePlaybackDiagnosticText(video?.error?.message)
+    };
+    this.lastHlsErrorDiagnostic = diagnostic;
+    console.warn("[Nuvio playback] hls.js error", diagnostic);
+    return diagnostic;
+  },
+
+  getLastHlsErrorDetail() {
+    const diagnostic = this.lastHlsErrorDiagnostic;
+    if (!diagnostic) {
+      return "";
+    }
+    const fields = [
+      diagnostic.type,
+      diagnostic.details,
+      diagnostic.reason,
+      diagnostic.error,
+      diagnostic.sourceBuffer ? `buffer=${diagnostic.sourceBuffer}` : "",
+      diagnostic.responseCode ? `HTTP ${diagnostic.responseCode}` : "",
+      diagnostic.level == null ? "" : `level=${diagnostic.level}`,
+      diagnostic.fragmentSn == null ? "" : `sn=${diagnostic.fragmentSn}`,
+      diagnostic.fragmentCc == null ? "" : `cc=${diagnostic.fragmentCc}`,
+      `fatal=${diagnostic.fatal}`,
+      `readyState=${diagnostic.readyState}`,
+      `networkState=${diagnostic.networkState}`,
+      diagnostic.currentTime == null ? "" : `time=${diagnostic.currentTime}`,
+      `buffered=${diagnostic.buffered}`,
+      diagnostic.mediaErrorCode ? `mediaCode=${diagnostic.mediaErrorCode}` : "",
+      diagnostic.mediaError
+    ].filter(Boolean);
+    return fields.join("; ");
   },
 
   forceAvPlayFallbackForCurrentSource(reason = "fallback") {
@@ -3050,16 +3228,69 @@ export const PlayerController = {
     this.playbackEngine = "hls.js";
     let networkRecoveryAttempts = 0;
     let mediaRecoveryAttempts = 0;
+    let transientLevelNotFoundRetries = 0;
+    let transientLevelNotFoundRetryTimer = null;
+
+    const clearTransientLevelNotFoundRetry = () => {
+      if (transientLevelNotFoundRetryTimer) {
+        clearTimeout(transientLevelNotFoundRetryTimer);
+        transientLevelNotFoundRetryTimer = null;
+      }
+    };
+
+    const scheduleTransientLevelNotFoundRetry = () => {
+      transientLevelNotFoundRetries += 1;
+      const retryAttempt = transientLevelNotFoundRetries;
+      const retryDelayMs = HLS_TRANSIENT_LEVEL_404_RETRY_BASE_DELAY_MS * retryAttempt;
+      clearTransientLevelNotFoundRetry();
+      console.warn("[Nuvio playback] retrying transient HLS level 404", {
+        attempt: retryAttempt,
+        limit: HLS_TRANSIENT_LEVEL_404_RETRY_LIMIT,
+        delayMs: retryDelayMs
+      });
+      transientLevelNotFoundRetryTimer = setTimeout(() => {
+        transientLevelNotFoundRetryTimer = null;
+        if (!this.isPlaybackRequestActive(playToken, url) || this.hlsInstance !== hls) {
+          return;
+        }
+        try {
+          // Reload the master manifest as bridge-generated level URLs can be
+          // temporarily unavailable or stale while a live window advances.
+          hls.loadSource(url);
+        } catch (error) {
+          console.warn("HLS level 404 retry failed", error);
+          this.lastPlaybackErrorCode = 2;
+          this.teardownHlsInstance();
+          this.emitVideoEvent("error", {
+            playbackEngine: "hls.js",
+            mediaErrorCode: 2,
+            hlsErrorType: "networkError",
+            hlsErrorDetails: "levelLoadError"
+          });
+        }
+      }, retryDelayMs);
+    };
 
     hls.on(Hls.Events.ERROR, (_, data = {}) => {
       if (!this.isPlaybackRequestActive(playToken, url)) {
         return;
       }
+      this.captureHlsErrorDiagnostic(data);
       if (!data?.fatal) {
         return;
       }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        const responseCode = Number(data?.response?.code || data?.networkDetails?.status || 0);
+        if (
+          String(data?.details || "") === "levelLoadError" &&
+          responseCode === 404 &&
+          transientLevelNotFoundRetries < HLS_TRANSIENT_LEVEL_404_RETRY_LIMIT
+        ) {
+          scheduleTransientLevelNotFoundRetry();
+          return;
+        }
         if (networkRecoveryAttempts >= 1) {
+          clearTransientLevelNotFoundRetry();
           this.lastPlaybackErrorCode = 2;
           this.teardownHlsInstance();
           this.emitVideoEvent("error", {
@@ -3106,6 +3337,11 @@ export const PlayerController = {
         hlsErrorType: String(data.type || ""),
         hlsErrorDetails: String(data.details || "")
       });
+    });
+
+    hls.on(Hls.Events.LEVEL_LOADED, () => {
+      clearTransientLevelNotFoundRetry();
+      transientLevelNotFoundRetries = 0;
     });
 
     hls.on(Hls.Events.MEDIA_ATTACHED, () => {
@@ -3454,6 +3690,11 @@ export const PlayerController = {
       // video, so only expose the rate that preserves A/V synchronization.
       return [1];
     }
+    if (Platform.isWebOS() && !this.isUsingNativePlayback()) {
+      // MSE-backed hls.js/dash.js playback never exposes a mediaId, so the
+      // native Luna setPlayRate command cannot target that pipeline.
+      return [1];
+    }
     return [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   },
 
@@ -3472,6 +3713,13 @@ export const PlayerController = {
     const targetSpeed = this.normalizePlaybackRate(speed);
     if (!this.isSupportedAvPlayPlaybackRate(targetSpeed)) {
       return false;
+    }
+    if (targetSpeed === 1) {
+      // Normal speed is AVPlay's native state. Tizen exposes no alternative
+      // rate in this app, so avoid repeatedly re-entering Samsung trick-play
+      // after play, buffering completion, resume, and seek.
+      this.appliedAvPlayPlaybackRate = 1;
+      return true;
     }
     const avplay = this.getAvPlay();
     if (!avplay || typeof avplay.setSpeed !== "function") {
@@ -3510,6 +3758,100 @@ export const PlayerController = {
     return this.applyAvPlayPlaybackRate(targetSpeed);
   },
 
+  isSupportedWebOsPlaybackRate(speed = 1) {
+    const targetSpeed = this.normalizePlaybackRate(speed);
+    if (!Number.isFinite(targetSpeed) || targetSpeed > 2) {
+      return false;
+    }
+    if (targetSpeed === 1) {
+      return true;
+    }
+    return Platform.isWebOS() && this.isUsingNativePlayback();
+  },
+
+  async applyWebOsPlaybackRate(speed = this.desiredPlaybackRate) {
+    if (!Platform.isWebOS() || !this.video || !this.isUsingNativePlayback()) {
+      return false;
+    }
+    const targetSpeed = this.normalizePlaybackRate(speed);
+    if (!this.isSupportedWebOsPlaybackRate(targetSpeed)) {
+      return false;
+    }
+
+    // A native webOS pipeline publishes its private mediaId asynchronously.
+    // MSE pipelines never publish one, which is why they are rejected above.
+    const mediaId =
+      this.syncNativeMediaId() ||
+      (await this.waitForNativeMediaId({ maxAttempts: 20, intervalMs: 250 }));
+    if (!mediaId) {
+      return false;
+    }
+    // Treat nativeMediaIdLookupToken as the native-pipeline generation. Once
+    // mediaId exists, waitForNativeMediaId() does not increment it, so a later
+    // token change means the source was reset while this Luna command was in
+    // flight.
+    const nativeMediaStateToken = Number(this.nativeMediaIdLookupToken || 0);
+
+    try {
+      // Do not locally time out this command. Luna requests cannot be cancelled
+      // through the shared wrapper, so declaring failure while one is still in
+      // flight can let a late success change the native rate after the UI has
+      // reverted to its previous value.
+      const result = await this.requestWebOsMediaCommand("setPlayRate", {
+        mediaId,
+        playRate: targetSpeed,
+        audioOutput: true
+      });
+      if (result?.returnValue !== true) {
+        return false;
+      }
+      if (nativeMediaStateToken !== Number(this.nativeMediaIdLookupToken || 0)) {
+        return false;
+      }
+      this.appliedWebOsPlaybackRate = targetSpeed;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  queueWebOsPlaybackRate(speed = this.desiredPlaybackRate) {
+    const previousCommand = this.webOsPlaybackRateCommandPromise;
+    const commandPromise = previousCommand
+      ? Promise.resolve(previousCommand)
+          .catch(() => false)
+          .then(() => this.applyWebOsPlaybackRate(speed))
+      : this.applyWebOsPlaybackRate(speed);
+    const trackedPromise = commandPromise.finally(() => {
+      if (this.webOsPlaybackRateCommandPromise === trackedPromise) {
+        this.webOsPlaybackRateCommandPromise = null;
+      }
+    });
+    this.webOsPlaybackRateCommandPromise = trackedPromise;
+    return trackedPromise;
+  },
+
+  reapplyWebOsPlaybackRate() {
+    if (
+      !Platform.isWebOS() ||
+      !this.video ||
+      !this.isUsingNativePlayback() ||
+      this.desiredPlaybackRate === 1
+    ) {
+      return Promise.resolve(false);
+    }
+    if (this.webOsPlaybackRateReapplyPromise) {
+      return this.webOsPlaybackRateReapplyPromise;
+    }
+    const reapplyPromise = this.queueWebOsPlaybackRate(this.desiredPlaybackRate).finally(() => {
+      if (this.webOsPlaybackRateReapplyPromise === reapplyPromise) {
+        this.webOsPlaybackRateReapplyPromise = null;
+      }
+    });
+    this.webOsPlaybackRateReapplyPromise = reapplyPromise;
+    return reapplyPromise;
+  },
+
   getPlaybackRate() {
     const targetSpeed = this.normalizePlaybackRate(this.desiredPlaybackRate);
     if (Number.isFinite(targetSpeed)) {
@@ -3518,7 +3860,7 @@ export const PlayerController = {
     return Number(this.video?.playbackRate || 1);
   },
 
-  setPlaybackRate(speed = 1) {
+  async setPlaybackRate(speed = 1) {
     if (!this.video) {
       return false;
     }
@@ -3539,23 +3881,37 @@ export const PlayerController = {
       return true;
     }
 
-    this.desiredPlaybackRate = targetSpeed;
+    if (Platform.isWebOS()) {
+      if (!this.isSupportedWebOsPlaybackRate(targetSpeed)) {
+        return false;
+      }
+      if (!this.isUsingNativePlayback()) {
+        // A non-native (MSE) pipeline is already at normal speed and has no
+        // mediaId that Luna can address.
+        if (targetSpeed === 1) {
+          this.desiredPlaybackRate = 1;
+          this.appliedWebOsPlaybackRate = 1;
+          return true;
+        }
+        return false;
+      }
+
+      const requestToken = Number(this.webOsPlaybackRateRequestToken || 0) + 1;
+      this.webOsPlaybackRateRequestToken = requestToken;
+      const applied = await this.queueWebOsPlaybackRate(targetSpeed);
+      if (!applied || requestToken !== this.webOsPlaybackRateRequestToken) {
+        return false;
+      }
+      this.desiredPlaybackRate = targetSpeed;
+      return true;
+    }
+
     try {
       this.video.playbackRate = targetSpeed;
     } catch (_) {
-      // webOS native playback can still accept the Luna play-rate command.
+      return false;
     }
-
-    const mediaId = this.syncNativeMediaId();
-    if (Platform.isWebOS() && mediaId) {
-      this.requestWebOsMediaCommand("setPlayRate", {
-        mediaId,
-        playRate: targetSpeed,
-        audioOutput: true
-      }).catch(() => {
-        // Keep the media-element playbackRate fallback.
-      });
-    }
+    this.desiredPlaybackRate = targetSpeed;
 
     return true;
   },
@@ -4003,13 +4359,19 @@ export const PlayerController = {
       });
     });
 
-    const syncNativeMediaId = () => {
+    const syncNativeMediaId = (event) => {
       this.syncNativeMediaId();
+      if (event?.type === "canplay" || event?.type === "playing") {
+        this.reapplyWebOsPlaybackRate().catch(() => {});
+      }
     };
     this.video.addEventListener("loadedmetadata", syncNativeMediaId);
     this.video.addEventListener("loadeddata", syncNativeMediaId);
     this.video.addEventListener("canplay", syncNativeMediaId);
     this.video.addEventListener("playing", syncNativeMediaId);
+    this.video.addEventListener("seeked", () => {
+      this.reapplyWebOsPlaybackRate().catch(() => {});
+    });
     this.video.addEventListener("emptied", () => {
       this.resetNativeMediaState();
     });
@@ -4119,6 +4481,7 @@ export const PlayerController = {
     this.currentPlaybackHeaders = { ...(requestHeaders || {}) };
     this.currentPlaybackMediaSourceType = this.resolveRuntimeSourceType(mediaSourceType);
     this.lastPlaybackErrorCode = 0;
+    this.lastHlsErrorDiagnostic = null;
 
     const sourceType =
       this.currentPlaybackMediaSourceType ||

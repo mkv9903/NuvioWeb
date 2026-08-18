@@ -289,10 +289,6 @@
     <string name="advanced_clear_cw_cache">Svuota Cache \"Continua a Guardare\"</string>
     <string name="advanced_clear_cw_cache_subtitle">Rimuovi miniature, titoli e dati arricchiti in cache per la sezione Continua a Guardare</string>
     <string name="advanced_clear_cw_cache_done">Cache svuotata</string>
-    <string name="advanced_strict_dpad_grid">Navigazione D-pad a Griglia Rigida</string>
-    <string name="advanced_strict_dpad_grid_subtitle">Mantiene il movimento del focus allineato a righe e colonne quando possibile.</string>
-    <string name="advanced_rotated_dpad">Mappatura D-pad Ruotata</string>
-    <string name="advanced_rotated_dpad_subtitle">Scambia la mappatura direzionale per simulatori o telecomandi che segnalano frecce ruotate.</string>
     <string name="settings_debug">Debug</string>
     <string name="settings_debug_subtitle">Strumenti per sviluppatori e feature flags</string>
     <string name="settings_plugins_section_subtitle">Gestisci repository, provider e stato dei plugin</string>
@@ -320,9 +316,13 @@
     <string name="supporters_contributors_subtitle">Le persone che sostengono Nuvio e i collaboratori che lo sviluppano su TV e mobile.</string>
     <string name="supporters_contributors_supporters_copy">Sostenitori e donatori aiutano a mantenere il progetto vivo, a pagare le infrastrutture e a fare spazio per feature ambiziose.</string>
     <string name="supporters_contributors_donate_copy">Nuvio è gratuito e open source. Se vuoi supportare il progetto, puoi aiutare a coprire il tempo e l\'infrastruttura dietro allo stesso.</string>
+    <string name="supporters_contributors_donation_progress_title">Server e manutenzione di questo mese</string>
+    <string name="supporters_contributors_donation_progress_complete">Coperto. Il supporto aggiuntivo ora va allo sviluppo.</string>
+    <string name="supporters_contributors_donation_progress_remaining">Dopo il 100%, il supporto aggiuntivo va allo sviluppo.</string>
+    <string name="supporters_contributors_loading_donation_progress">Caricamento dell\'avanzamento del finanziamento...</string>
     <string name="supporters_contributors_donate_button">Dona a Nuvio</string>
     <string name="supporters_contributors_qr_title">Scansiona per donare</string>
-    <string name="supporters_contributors_qr_subtitle">Apri il link sul tuo telefono e supporta Nuvio tramite Ko-fi.</string>
+    <string name="supporters_contributors_qr_subtitle">Apri il link sul tuo telefono per supportare Nuvio.</string>
     <string name="supporters_contributors_qr_hint">Punta la fotocamera verso il QR code o usa il bottone in basso.</string>
     <string name="supporters_contributors_back_button">Torna ai dettagli</string>
     <string name="supporters_tab">Sostenitori</string>
@@ -927,6 +927,7 @@
     <string name="player_via">tramite %1$s</string>
     <string name="season_episode_format">S%1$d E%2$d</string>
     <string name="player_subtitle_delay">Ritardo sottotitoli</string>
+    <string name="subtitle_delay_reset">Azzera ritardo</string>
     <string name="player_error_title">Errore di riproduzione</string>
     <string name="player_error_details">Dettagli dell'errore di riproduzione</string>
     <string name="player_go_back">Torna indietro</string>
@@ -2730,4 +2731,11 @@
     <string name="debrid_selection_count_value">{{count}} selezionati</string>
     <string name="trakt_manual_code_description">Qui verrà mostrato un codice di attivazione manuale. Non è richiesto alcun codice QR.</string>
     <string name="licenses_attributions_simkl_body">Nuvio si connette a Simkl per autenticazione, liste, cronologia, avanzamento e scrobbling. I dati di tracciamento per film, serie TV e anime sono forniti da Simkl. Nuvio non è affiliato né approvato da Simkl.</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">Nuvio si connette a Premiumize per l\'autenticazione dell\'account, l\'accesso alla libreria cloud, i controlli della cache e le funzioni di riproduzione cloud. Nuvio non è affiliato né approvato da Premiumize.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">Nuvio si connette a TorBox per l\'autenticazione dell\'account, l\'accesso alla libreria cloud, i controlli della cache e le funzioni di riproduzione cloud. Nuvio non è affiliato né approvato da TorBox.</string>
+    <string name="cloud_library_search_label">Cerca nella libreria cloud</string>
+    <string name="cloud_library_search_placeholder">Cerca file</string>
+    <string name="cloud_library_search_clear">Cancella ricerca</string>
 </resources>

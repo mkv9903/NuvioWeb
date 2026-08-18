@@ -419,7 +419,7 @@
     <string name="account_error_invalid_request">Neplatná požiadavka. Skontrolujte svoj vstup.</string>
     <string name="account_error_unexpected">Vyskytla sa neočakávaná chyba.</string>
     <string name="experience_mode_switch_to_essential">Prepnúť na Základnú</string>
-    <string name="experience_mode_switch_to_essential_subtitle">Skryť pokročilé nastavenia bez zmeny uložených hodnôt.</string>
+    <string name="experience_mode_switch_to_essential_subtitle">Skryť pokročilé nastavenia bez zmeny uložených hodnôt</string>
     <string name="experience_mode_switch_to_advanced">Prepnúť na Pokročilú</string>
     <string name="experience_mode_switch_to_advanced_header_subtitle">Prepnite na Pokročilú pre úplné nastavenia.</string>
     <string name="experience_mode_switch_to_advanced_subtitle">Zobraziť úplné rozloženie, pluginy, integrácie, katalóg, kolekcie a nastavenia ladenia.</string>
@@ -2663,4 +2663,25 @@
     <string name="tracking_removal_impact_rating">hodnotenie</string>
     <string name="tracking_removal_impact_history_rating">história sledovania a hodnotenie</string>
     <string name="licenses_attributions_simkl_body">Aplikácia Nuvio sa pripája k službe Simkl na účely overenia účtu, zoznamov sledovania, histórie sledovania, priebehu prehrávania a scrobblovania. Údaje o sledovaní filmov, seriálov a anime poskytuje služba Simkl. Aplikácia Nuvio nie je spojená so službou Simkl ani ňou nie je podporovaná.</string>
+    <string name="licenses_attributions_premiumize_title">Premiumize</string>
+    <string name="licenses_attributions_premiumize_body">Nuvio sa pripája k Premiumize na overenie účtu, prístup do cloudovej knižnice, kontrolu vyrovnávacej pamäte a funkcie cloudového prehrávania. Nuvio nie je spojený s Premiumize a nie je ním podporovaný.</string>
+    <string name="licenses_attributions_torbox_title">TorBox</string>
+    <string name="licenses_attributions_torbox_body">Nuvio sa pripája k TorBox na overenie účtu, prístup do cloudovej knižnice, kontrolu vyrovnávacej pamäte a funkcie cloudového prehrávania. Nuvio nie je spojený s TorBox a nie je ním podporovaný.</string>
+    <string name="update_error_check_failed">Kontrola aktualizácie zlyhala</string>
+    <string name="licenses_attributions_simkl_title">Simkl</string>
+    <string name="debrid_formatter_reset_value">Resetovať</string>
+    <string name="debrid_selection_count_value">Vybraté {{count}}</string>
+    <string name="debrid_service_degraded">Služba Debrid je momentálne znížená. Skúste to neskôr alebo vyberte iný zdroj.</string>
+    <string name="debrid_stream_description_template_prompt">Vzor popisu streamu</string>
+    <string name="debrid_stream_description_template_subtitle">Vzor používaný na generovanie podrobností zdroja Direct Debrid.</string>
+    <string name="debrid_stream_description_template_title">Vzor popisu streamu</string>
+    <string name="debrid_stream_name_template_prompt">Vzor názvu streamu</string>
+    <string name="debrid_stream_name_template_subtitle">Vzor používaný na generovanie názvov zdrojov Direct Debrid.</string>
+    <string name="debrid_stream_name_template_title">Vzor názvu streamu</string>
+    <string name="cloud_library_search_label">Hľadať v cloudovej knižnici</string>
+    <string name="cloud_library_search_placeholder">Vyhľadajte súbory</string>
+    <string name="cloud_library_error_provider_unavailable">Cloudová knižnica nie je dostupná pre %1$s.</string>
+    <string name="cloud_library_error_disabled">Cloudová knižnica je vypnutá.</string>
+    <string name="cloud_library_search_clear">Vymazať vyhľadávanie</string>
+    <string name="upcoming_section_title">Nespustené</string>
 </resources>

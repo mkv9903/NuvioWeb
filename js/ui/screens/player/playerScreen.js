@@ -77,6 +77,7 @@ import {
 } from "../../../core/player/subtitleVerticalOffset.js";
 import {
   BitmapSubtitleDecoder,
+  normalizeBitmapSubtitleFormat,
   supportsBitmapSubtitleDecoding,
   warmBitmapSubtitleDecoder
 } from "../../../core/player/bitmapSubtitleDecoder.js";
@@ -93,6 +94,7 @@ const NEXT_EPISODE_SOURCE_RESOLVE_TIMEOUT_MS = 45000;
 const STARTUP_AUDIO_PREFERENCE_RETRY_WINDOW_MS = 6000;
 const STARTUP_AUDIO_PREFERENCE_RETRY_INTERVAL_MS = 250;
 const WEBOS_REMOTE_MKV_AUDIO_GATE_MAX_WAIT_MS = 30000;
+const WEBOS_NATIVE_STARTUP_LOADING_EXTENSION_MS = 120000;
 const EPISODE_PANEL_TRANSITION_MS = 220;
 const activeEngineFsPlaybackClaims = new Map();
 const deferredEngineFsRemovalTimers = new Map();
@@ -647,16 +649,14 @@ function isUnsupportedEmbeddedSubtitleTrack(track = {}) {
   return UNSUPPORTED_EMBEDDED_SUBTITLE_CODEC_PATTERNS.some((pattern) => pattern.test(searchText));
 }
 
-function isVobSubEmbeddedSubtitleTrack(track = {}) {
-  const codecText = normalizeTrackCodecText(
+function getEmbeddedBitmapSubtitleFormat(track = {}) {
+  const primaryFormat = normalizeBitmapSubtitleFormat(
     track?.codec || track?.subtitleCodec || track?.codec_name || track?.format || ""
   );
-  if (codecText === "VOBSUB" || codecText === "S VOBSUB") {
-    return true;
+  if (primaryFormat) {
+    return primaryFormat;
   }
-  return /\bvob[ /_-]*sub\b|\bdvd[ /_-]*sub(?:title)?\b/i.test(
-    getTrackMetadataStrings(track).join(" ")
-  );
+  return normalizeBitmapSubtitleFormat(getTrackMetadataStrings(track).join(" "));
 }
 
 function canUseWebOsBitmapSubtitles() {
@@ -2487,6 +2487,8 @@ export const PlayerScreen = {
     this.engineFsStartupRetryTimer = null;
     this.engineFsStartupErrorRetries = 0;
     this.engineFsStallExtensions = 0;
+    this.webOsNativeStartupLoadingExtended = false;
+    this.webOsNativeReadyStartupRetries = 0;
     this.lastEngineFsStallStats = null;
     this.lastEngineFsStartupErrorStats = null;
     this.engineFsKeepAliveHandle = null;
@@ -2756,7 +2758,10 @@ export const PlayerScreen = {
     const id = imdbItemId || baseItemId || rawItemId || "";
     const currentStream = this.getCurrentStreamCandidate();
     const rawStream = currentStream?.raw || currentStream || {};
-    const behaviorHints = rawStream?.behaviorHints || {};
+    const behaviorHints = {
+      ...(rawStream?.behaviorHints || {}),
+      ...(currentStream?.behaviorHints || {})
+    };
 
     let videoId = null;
     if (type === "series") {
@@ -2785,9 +2790,24 @@ export const PlayerScreen = {
       episode: this.params?.episode ?? null,
       title: this.params?.playerTitle || this.params?.itemTitle || null,
       year: this.params?.playerReleaseYear || this.params?.year || null,
-      videoHash: behaviorHints.videoHash || rawStream.videoHash || this.params?.videoHash || null,
-      videoSize: behaviorHints.videoSize || rawStream.videoSize || this.params?.videoSize || null,
-      filename: behaviorHints.filename || rawStream.filename || this.params?.filename || null
+      videoHash:
+        behaviorHints.videoHash ||
+        currentStream?.videoHash ||
+        rawStream.videoHash ||
+        this.params?.videoHash ||
+        null,
+      videoSize:
+        behaviorHints.videoSize ||
+        currentStream?.videoSize ||
+        rawStream.videoSize ||
+        this.params?.videoSize ||
+        null,
+      filename:
+        behaviorHints.filename ||
+        currentStream?.filename ||
+        rawStream.filename ||
+        this.params?.filename ||
+        null
     };
   },
 
@@ -3327,7 +3347,7 @@ export const PlayerScreen = {
     this.stickyProgressFocus = false;
     this.autoHideControlsAfterSeek = false;
     this.controlFocusZone = "skipIntro";
-    this.renderControlButtons();
+    this.syncControlFocusDom();
     this.syncSkipIntroFocusState();
     this.resetControlsAutoHide();
     return true;
@@ -4128,6 +4148,20 @@ export const PlayerScreen = {
   },
 
   canDiscoverEmbeddedAudioTracks() {
+    if (Environment.isTizen()) {
+      const usingNativePlayback =
+        typeof PlayerController.isUsingNativePlayback === "function"
+          ? PlayerController.isUsingNativePlayback()
+          : false;
+      const usingAvPlay =
+        typeof PlayerController.isUsingAvPlay === "function"
+          ? PlayerController.isUsingAvPlay()
+          : false;
+      const probeUrl = this.getTrackProbeUrl();
+      return Boolean(
+        usingNativePlayback && usingAvPlay && probeUrl && !this.isCurrentSourceAdaptiveManifest()
+      );
+    }
     return this.canDiscoverEmbeddedSubtitleTracks();
   },
 
@@ -4147,12 +4181,13 @@ export const PlayerScreen = {
         return type === "text" || type === "subtitle";
       })
       .filter((track) =>
-        isVobSubEmbeddedSubtitleTrack(track)
+        getEmbeddedBitmapSubtitleFormat(track)
           ? canUseWebOsBitmapSubtitles()
           : !isUnsupportedEmbeddedSubtitleTrack(track)
       )
       .map((track, index) => {
-        const bitmapSubtitle = isVobSubEmbeddedSubtitleTrack(track);
+        const bitmapSubtitleFormat = getEmbeddedBitmapSubtitleFormat(track);
+        const bitmapSubtitle = Boolean(bitmapSubtitleFormat);
         const sourceTrackId = Number(track?.id);
         const rawLanguage = getTrackLanguageValue(track);
         const normalizedLanguage = normalizeTrackLanguageCode(rawLanguage);
@@ -4170,6 +4205,7 @@ export const PlayerScreen = {
           sourceTrackId: Number.isFinite(sourceTrackId) ? sourceTrackId : -1,
           nativeTrackIndex: bitmapSubtitle ? -1 : nativeTrackIndex++,
           bitmapSubtitle,
+          bitmapSubtitleFormat,
           label: getMeaningfulTrackLabel(track) || fallbackLabel,
           language:
             normalizedLanguage ||
@@ -5518,8 +5554,20 @@ export const PlayerScreen = {
     const engineFs = candidate?.engineFs || raw?.engineFs || this.currentEngineFsStream || null;
     const mediaError = video?.error || null;
     const eventErrorDetail = this.getPlaybackEventErrorDetail(eventDetail);
+    const rememberedHlsError =
+      typeof PlayerController.getLastHlsErrorDetail === "function"
+        ? PlayerController.getLastHlsErrorDetail()
+        : "";
     const httpStatus = extractPlaybackHttpStatus(
-      [detail, eventErrorDetail, error?.message, error?.name, error?.errorText, error?.status]
+      [
+        detail,
+        eventErrorDetail,
+        rememberedHlsError,
+        error?.message,
+        error?.name,
+        error?.errorText,
+        error?.status
+      ]
         .filter(Boolean)
         .join(" ")
     );
@@ -5566,7 +5614,8 @@ export const PlayerScreen = {
     pushPlaybackDiagnosticLine(
       lines,
       "HLS error",
-      eventDetail?.hlsErrorDetails || eventDetail?.hlsErrorType
+      eventDetail?.hlsErrorDetails || eventDetail?.hlsErrorType || rememberedHlsError,
+      420
     );
     pushPlaybackDiagnosticLine(lines, "DASH error", eventDetail?.dashError);
     pushPlaybackDiagnosticLine(lines, "AVPlay error", eventDetail?.avplayError);
@@ -8338,7 +8387,20 @@ export const PlayerScreen = {
 
     const onPlaying = () => {
       if (this.isStartupErrorVisible()) {
-        return;
+        if (!Environment.isWebOS()) {
+          return;
+        }
+        console.info("webOS playback recovered after the startup stall guard", {
+          url: this.activePlaybackUrl,
+          engine: PlayerController.playbackEngine
+        });
+        this.clearStartupError();
+        this.failedPlaybackUrls?.delete?.(String(this.activePlaybackUrl || "").trim());
+        const currentStreamId = String(this.getCurrentStreamCandidate()?.id || "").trim();
+        if (currentStreamId) {
+          this.failedPlaybackStreamIds?.delete?.(currentStreamId);
+        }
+        this.loadingVisible = true;
       }
       if (this.seekLoading) {
         this.seekLoading = false;
@@ -8540,6 +8602,7 @@ export const PlayerScreen = {
       this.attemptPendingPlaybackRestore();
       this.completeSeekLoadingIfReady();
       this.markPlaybackProgress();
+      this.renderBitmapSubtitleAtCurrentTime({ force: true });
       this.updateUiTick();
     };
 
@@ -8953,6 +9016,19 @@ export const PlayerScreen = {
     ];
   },
 
+  getControlRenderSignature(controls = this.getControlDefinitions()) {
+    return JSON.stringify(
+      controls.map((control) => [
+        control.action || "",
+        control.label || "",
+        control.icon || "",
+        control.title || "",
+        Boolean(control.primary),
+        Boolean(control.useMask)
+      ])
+    );
+  },
+
   renderControlButtons() {
     if (this.isExternalFrameMode()) {
       return;
@@ -8963,6 +9039,7 @@ export const PlayerScreen = {
     }
 
     const controls = this.getControlDefinitions();
+    const controlRenderSignature = this.getControlRenderSignature(controls);
     if (
       this.stickyProgressFocus &&
       this.controlsVisible &&
@@ -8990,6 +9067,7 @@ export const PlayerScreen = {
     `
       )
       .join("");
+    this.renderedControlSignature = controlRenderSignature;
 
     const buttons = Array.from(wrap.querySelectorAll(".player-control-btn"));
     buttons.forEach((button, index) => {
@@ -9046,6 +9124,70 @@ export const PlayerScreen = {
         progressShell.blur();
       }
     }
+    this.syncSkipIntroFocusState();
+    this.renderNextEpisodeCard();
+    this.syncPlayerOverlayLayoutState();
+    this.renderBitmapSubtitleAtCurrentTime();
+  },
+
+  syncControlFocusDom() {
+    if (this.isExternalFrameMode()) {
+      return;
+    }
+    const wrap = this.uiRefs?.controlButtons;
+    if (!wrap) {
+      return;
+    }
+
+    const controls = this.getControlDefinitions();
+    const buttons = Array.from(wrap.querySelectorAll(".player-control-btn"));
+    const controlsMatchDom = buttons.every(
+      (button, index) => button.dataset.action === String(controls[index]?.action || "")
+    );
+    // This path is used only when focus moves. If playback state changed the
+    // available controls without rendering them first, fall back to the full
+    // state render instead of focusing a stale button.
+    if (
+      buttons.length !== controls.length ||
+      !controlsMatchDom ||
+      this.renderedControlSignature !== this.getControlRenderSignature(controls)
+    ) {
+      this.renderControlButtons();
+      return;
+    }
+
+    this.controlFocusIndex = clamp(this.controlFocusIndex, 0, Math.max(0, controls.length - 1));
+    buttons.forEach((button, index) => {
+      button.classList.toggle(
+        "focused",
+        this.controlFocusZone === "buttons" && index === this.controlFocusIndex
+      );
+    });
+
+    const progressShell = this.uiRefs?.progressShell;
+    progressShell?.classList.toggle("focused", this.controlFocusZone === "progress");
+
+    if (this.controlFocusZone === "progress") {
+      buttons.forEach((button) => button.blur?.());
+      if (progressShell && document.activeElement !== progressShell) {
+        progressShell.focus?.();
+      }
+    } else if (this.controlFocusZone === "buttons") {
+      if (progressShell && document.activeElement === progressShell) {
+        progressShell.blur?.();
+      }
+      const focusedButton = buttons[this.controlFocusIndex] || null;
+      if (focusedButton && document.activeElement !== focusedButton) {
+        focusedButton.focus?.();
+      }
+    } else if (this.controlFocusZone === "skipIntro") {
+      buttons.forEach((button) => button.blur?.());
+      if (progressShell && document.activeElement === progressShell) {
+        progressShell.blur?.();
+      }
+    }
+
+    // Preserve the non-markup side effects of renderControlButtons().
     this.syncSkipIntroFocusState();
     this.renderNextEpisodeCard();
     this.syncPlayerOverlayLayoutState();
@@ -9177,7 +9319,7 @@ export const PlayerScreen = {
     this.autoHideControlsAfterSeek = false;
     this.controlFocusZone = "buttons";
     this.controlFocusIndex = 0;
-    this.renderControlButtons();
+    this.syncControlFocusDom();
     const firstButton = this.container.querySelector(".player-control-btn[data-action]");
     firstButton?.focus?.();
   },
@@ -9187,7 +9329,7 @@ export const PlayerScreen = {
       this.stickyProgressFocus = false;
       this.autoHideControlsAfterSeek = false;
       this.controlFocusZone = "buttons";
-      this.renderControlButtons();
+      this.syncControlFocusDom();
       return;
     }
     const activeElement = document.activeElement;
@@ -9200,7 +9342,7 @@ export const PlayerScreen = {
     }
     this.stickyProgressFocus = true;
     this.controlFocusZone = "progress";
-    this.renderControlButtons();
+    this.syncControlFocusDom();
     this.uiRefs?.progressShell?.focus?.();
     this.scheduleProgressBarRefocus();
   },
@@ -9650,6 +9792,7 @@ export const PlayerScreen = {
     this.seekLoadingTargetSeconds = Number(seconds || 0);
     this.seekLoading = true;
     this.updateLoadingVisibility();
+    this.prepareBitmapSubtitleForSeek(this.seekLoadingTargetSeconds);
     if (typeof PlayerController.seekToSeconds === "function") {
       const didSeek = Boolean(PlayerController.seekToSeconds(seconds));
       if (!didSeek) {
@@ -10360,6 +10503,7 @@ export const PlayerScreen = {
       resetSilentAudioState = true,
       preservePlaybackState = false,
       preservePendingRestore = false,
+      preserveStartupRecoveryState = false,
       forceEngine = null,
       sourceCandidate: explicitSourceCandidate = null,
       mountToken = null
@@ -10421,6 +10565,10 @@ export const PlayerScreen = {
     }
 
     this.hasPresentedPlaybackFrame = false;
+    this.webOsNativeStartupLoadingExtended = false;
+    if (!preserveStartupRecoveryState) {
+      this.webOsNativeReadyStartupRetries = 0;
+    }
     this.startupPlaybackBaselineSeconds = null;
     this.startupPlaybackHasAdvanced = false;
     this.bufferingSpinnerBaselineSeconds = null;
@@ -11200,6 +11348,42 @@ export const PlayerScreen = {
         }
       }
 
+      const startupMediaErrorCode = Number(PlayerController.getLastPlaybackErrorCode?.() || 0);
+      const networkState = Number(PlayerController.video?.networkState ?? 0);
+      const startupHlsError =
+        startup && typeof PlayerController.getLastHlsErrorDetail === "function"
+          ? PlayerController.getLastHlsErrorDetail()
+          : "";
+      if (startup) {
+        console.warn("[Nuvio playback] startup stall", {
+          engine: String(PlayerController.playbackEngine || "unknown"),
+          readyState,
+          networkState,
+          mediaErrorCode: startupMediaErrorCode || null,
+          hlsError: startupHlsError || null
+        });
+      }
+      if (
+        startup &&
+        Environment.isWebOS() &&
+        !this.currentEngineFsStream &&
+        String(PlayerController.playbackEngine || "") === "native-file" &&
+        startupMediaErrorCode === 0 &&
+        readyState === 0 &&
+        networkState === 2 &&
+        !this.webOsNativeStartupLoadingExtended
+      ) {
+        this.webOsNativeStartupLoadingExtended = true;
+        console.info("webOS native playback is still loading; extending the startup stall guard", {
+          url: this.activePlaybackUrl,
+          timeoutMs: WEBOS_NATIVE_STARTUP_LOADING_EXTENSION_MS
+        });
+        this.schedulePlaybackStallGuard({
+          timeoutMs: WEBOS_NATIVE_STARTUP_LOADING_EXTENSION_MS
+        });
+        return;
+      }
+
       const targetEngine =
         typeof PlayerController.getAlternativePlaybackEngine === "function"
           ? PlayerController.getAlternativePlaybackEngine(this.activePlaybackUrl)
@@ -11218,10 +11402,43 @@ export const PlayerScreen = {
         return;
       }
 
+      if (
+        startup &&
+        Environment.isWebOS() &&
+        !this.currentEngineFsStream &&
+        String(PlayerController.playbackEngine || "") === "native-file" &&
+        startupMediaErrorCode === 0 &&
+        !startupHlsError &&
+        readyState >= 3 &&
+        networkState === 2 &&
+        Number(this.webOsNativeReadyStartupRetries || 0) < 1
+      ) {
+        this.webOsNativeReadyStartupRetries = Number(this.webOsNativeReadyStartupRetries || 0) + 1;
+        const stalledPlaybackUrl = this.activePlaybackUrl;
+        const sourceCandidate =
+          this.getStreamCandidateByUrl(stalledPlaybackUrl) || this.getCurrentStreamCandidate();
+        console.warn(
+          "webOS native playback is ready but has not started; retrying the current source once",
+          {
+            engine: PlayerController.playbackEngine,
+            readyState,
+            networkState
+          }
+        );
+        void this.playStreamByUrl(stalledPlaybackUrl, {
+          preservePanel: true,
+          preservePlaybackState: true,
+          resetSilentAudioState: false,
+          preserveStartupRecoveryState: true,
+          sourceCandidate
+        });
+        return;
+      }
+
       this.releaseStartupAudioGate({ resume: false });
       if (startup) {
         this.markPlaybackSourceFailed(this.activePlaybackUrl);
-        const mediaErrorCode = Number(PlayerController.getLastPlaybackErrorCode?.() || 0);
+        const mediaErrorCode = startupMediaErrorCode;
         const sourceCandidate =
           this.getStreamCandidateByUrl(this.activePlaybackUrl) || this.getCurrentStreamCandidate();
         const startupErrorMessage = this.getStartupErrorMessage(
@@ -11954,9 +12171,10 @@ export const PlayerScreen = {
 
   mergeAvPlayAudioTrackMetadata(track, index) {
     const avplayTrackIndex = Number(track?.avplayTrackIndex);
-    let embeddedTrack = this.getEmbeddedAudioTrackByNativeIndex(
-      Number.isFinite(avplayTrackIndex) ? avplayTrackIndex : index
-    );
+    let embeddedTrack =
+      this.getEmbeddedAudioTrackByNativeIndex(
+        Number.isFinite(avplayTrackIndex) ? avplayTrackIndex : index
+      ) || this.getEmbeddedAudioTrack(index);
     const explicitLanguage = normalizeTrackLanguageCode(track?.language || track?.lang || "");
     let embeddedLanguage = normalizeTrackLanguageCode(
       embeddedTrack?.language || embeddedTrack?.lang || ""
@@ -12463,6 +12681,28 @@ export const PlayerScreen = {
     }
   },
 
+  prepareBitmapSubtitleForSeek(timeSeconds) {
+    const track = this.bitmapSubtitleTrack;
+    if (!track) {
+      return;
+    }
+    const targetSeconds = Math.max(0, Number(timeSeconds) || 0);
+    this.bitmapSubtitleLoadToken = Number(this.bitmapSubtitleLoadToken || 0) + 1;
+    this.bitmapSubtitleLoading = false;
+    this.bitmapSubtitleLastErrorAt = 0;
+    this.clearBitmapSubtitleCanvas();
+    const outsideWindow =
+      targetSeconds < this.bitmapSubtitleWindowStart ||
+      targetSeconds >= this.bitmapSubtitleWindowEnd;
+    if (outsideWindow) {
+      this.bitmapSubtitleDecoder?.dispose?.();
+      this.bitmapSubtitleDecoder = null;
+      this.bitmapSubtitleWindowStart = 0;
+      this.bitmapSubtitleWindowEnd = 0;
+      void this.loadBitmapSubtitleWindow(targetSeconds);
+    }
+  },
+
   async loadBitmapSubtitleWindow(timeSeconds) {
     const track = this.bitmapSubtitleTrack;
     const sourceUrl = this.getTrackProbeUrl();
@@ -12488,7 +12728,11 @@ export const PlayerScreen = {
       }
       const decoder = new BitmapSubtitleDecoder();
       if (windowData.cueCount > 0) {
-        await decoder.load(windowData.idxContent, windowData.subData);
+        await decoder.load({
+          format: windowData.format,
+          idxContent: windowData.idxContent,
+          data: windowData.data
+        });
       }
       if (requestToken !== this.bitmapSubtitleLoadToken || this.bitmapSubtitleTrack !== track) {
         decoder.dispose();
@@ -12506,7 +12750,8 @@ export const PlayerScreen = {
       if (requestToken === this.bitmapSubtitleLoadToken && this.bitmapSubtitleTrack === track) {
         this.bitmapSubtitleLastErrorAt = Date.now();
         this.clearBitmapSubtitleCanvas();
-        console.warn("Embedded VOBSUB rendering failed", {
+        console.warn("Embedded bitmap subtitle rendering failed", {
+          format: track.bitmapSubtitleFormat || "unknown",
           trackNumber: track.sourceTrackId,
           error: error?.message || String(error || "")
         });
@@ -12545,7 +12790,8 @@ export const PlayerScreen = {
       return false;
     }
     const canvas = this.uiRefs?.bitmapSubtitles || document.getElementById("playerBitmapSubtitles");
-    if (!canvas || !frame.width || !frame.height || !frame.screenWidth || !frame.screenHeight) {
+    const compositions = Array.isArray(frame.compositions) ? frame.compositions : [];
+    if (!canvas || !frame.screenWidth || !frame.screenHeight) {
       return false;
     }
     const viewport =
@@ -12579,12 +12825,18 @@ export const PlayerScreen = {
       sizeScale,
       verticalOffsetPx
     ].join(":");
+    const hasRenderableCompositions = compositions.some(
+      (composition) =>
+        composition?.width > 0 &&
+        composition?.height > 0 &&
+        composition.rgba?.length === composition.width * composition.height * 4
+    );
     if (
       !force &&
       renderKey === this.bitmapSubtitleLastFrameKey &&
-      !canvas.classList.contains("hidden")
+      canvas.classList.contains("hidden") !== hasRenderableCompositions
     ) {
-      return true;
+      return hasRenderableCompositions;
     }
     canvas.width = viewportWidth;
     canvas.height = viewportHeight;
@@ -12593,30 +12845,54 @@ export const PlayerScreen = {
       return false;
     }
     context.clearRect(0, 0, viewportWidth, viewportHeight);
-    const scratch = this.bitmapSubtitleScratchCanvas || document.createElement("canvas");
-    this.bitmapSubtitleScratchCanvas = scratch;
-    scratch.width = frame.width;
-    scratch.height = frame.height;
-    const scratchContext = scratch.getContext("2d");
-    if (!scratchContext || frame.rgba.length !== frame.width * frame.height * 4) {
+    if (!hasRenderableCompositions) {
+      canvas.classList.add("hidden");
+      canvas.setAttribute("aria-hidden", "true");
+      this.bitmapSubtitleLastFrameKey = renderKey;
       return false;
     }
-    const imageData = scratchContext.createImageData(frame.width, frame.height);
-    imageData.data.set(frame.rgba);
-    scratchContext.putImageData(imageData, 0, 0);
+    const scratch = this.bitmapSubtitleScratchCanvas || document.createElement("canvas");
+    this.bitmapSubtitleScratchCanvas = scratch;
+    const scratchContext = scratch.getContext("2d");
+    if (!scratchContext) {
+      return false;
+    }
     const scaleX = rect.width / frame.screenWidth;
     const scaleY = rect.height / frame.screenHeight;
-    const targetWidth = frame.width * scaleX * sizeScale;
-    const targetHeight = frame.height * scaleY * sizeScale;
-    const targetCenterX = rect.x + (frame.x + frame.width / 2) * scaleX;
-    const targetCenterY = rect.y + (frame.y + frame.height / 2) * scaleY + verticalOffsetPx;
-    context.drawImage(
-      scratch,
-      targetCenterX - targetWidth / 2,
-      targetCenterY - targetHeight / 2,
-      targetWidth,
-      targetHeight
-    );
+    let renderedCompositions = 0;
+    compositions.forEach((composition) => {
+      if (
+        !composition?.width ||
+        !composition?.height ||
+        composition.rgba?.length !== composition.width * composition.height * 4
+      ) {
+        return;
+      }
+      scratch.width = composition.width;
+      scratch.height = composition.height;
+      const imageData = scratchContext.createImageData(composition.width, composition.height);
+      imageData.data.set(composition.rgba);
+      scratchContext.putImageData(imageData, 0, 0);
+      const targetWidth = composition.width * scaleX * sizeScale;
+      const targetHeight = composition.height * scaleY * sizeScale;
+      const targetCenterX = rect.x + (composition.x + composition.width / 2) * scaleX;
+      const targetCenterY =
+        rect.y + (composition.y + composition.height / 2) * scaleY + verticalOffsetPx;
+      context.drawImage(
+        scratch,
+        targetCenterX - targetWidth / 2,
+        targetCenterY - targetHeight / 2,
+        targetWidth,
+        targetHeight
+      );
+      renderedCompositions += 1;
+    });
+    if (!renderedCompositions) {
+      canvas.classList.add("hidden");
+      canvas.setAttribute("aria-hidden", "true");
+      this.bitmapSubtitleLastFrameKey = renderKey;
+      return false;
+    }
     canvas.classList.remove("hidden");
     canvas.setAttribute("aria-hidden", "false");
     this.bitmapSubtitleLastFrameKey = renderKey;
@@ -13855,6 +14131,15 @@ export const PlayerScreen = {
     return Array.from(new Set(targets));
   },
 
+  getStartupAutoSelectSubtitleLanguageTargets() {
+    // Android treats a primary "None" as no normal auto-selection target;
+    // the secondary language remains useful for filtering/loading only.
+    if (this.getStartupPreferredSubtitleLanguageKey() === SUBTITLE_LANGUAGE_OFF_KEY) {
+      return [];
+    }
+    return this.getStartupPreferredSubtitleLanguageTargets();
+  },
+
   shouldUseStartupForcedSubtitles(settings = PlayerSettingsStore.get()) {
     const preferred = extractSubtitleLanguageSetting(
       settings.subtitleStyle?.preferredLanguage || settings.subtitleLanguage || "off"
@@ -13881,7 +14166,7 @@ export const PlayerScreen = {
       return null;
     }
 
-    const explicitTargets = this.getStartupPreferredSubtitleLanguageTargets();
+    const explicitTargets = this.getStartupAutoSelectSubtitleLanguageTargets();
     const selectedAudioOption = this.collectAudioOptionItems().find(
       (entry) => entry.selected && entry.languageKey
     );
@@ -13916,7 +14201,7 @@ export const PlayerScreen = {
     if (this.shouldUseStartupForcedSubtitles(settings)) {
       return "audio-forced";
     }
-    const explicitTargets = this.getStartupPreferredSubtitleLanguageTargets();
+    const explicitTargets = this.getStartupAutoSelectSubtitleLanguageTargets();
     if (explicitTargets.length) {
       return "language";
     }
@@ -14180,7 +14465,7 @@ export const PlayerScreen = {
   },
 
   findStartupPreferredSubtitleOption(
-    targets = this.getStartupPreferredSubtitleLanguageTargets(),
+    targets = this.getStartupAutoSelectSubtitleLanguageTargets(),
     mode = "language"
   ) {
     const normalizedTargets = Array.isArray(targets) ? targets.filter(Boolean) : [];
@@ -14214,19 +14499,13 @@ export const PlayerScreen = {
         if (forcedInternal) return forcedInternal;
         if (Environment.isWebOS()) {
           // Android can rely on ExoPlayer's forced flag, while webOS can omit
-          // it for embedded tracks. Keep embedded tracks ahead of addons, but
-          // only relax the regional match for an explicitly forced track or
-          // when exactly one compatible embedded track exists.
+          // it for embedded tracks. Keep embedded tracks ahead of addons and
+          // relax only the regional match for an explicitly forced track.
           const compatibleForcedInternal = options.find(
             (entry) =>
               entry.sourceType === "internal" && entry.isForced && matchTarget(entry, target)
           );
           if (compatibleForcedInternal) return compatibleForcedInternal;
-
-          const compatibleInternalTracks = options.filter(
-            (entry) => entry.sourceType === "internal" && matchTarget(entry, target)
-          );
-          if (compatibleInternalTracks.length === 1) return compatibleInternalTracks[0];
         }
         const forcedAddon = findMatch(target, { sourceType: "addon", forced: true });
         if (forcedAddon) return forcedAddon;
@@ -14286,7 +14565,7 @@ export const PlayerScreen = {
     }
 
     const configuredPreferenceMode = this.getStartupSubtitlePreferenceMode();
-    const preferredSubtitleTargets = this.getStartupPreferredSubtitleLanguageTargets();
+    const preferredSubtitleTargets = this.getStartupAutoSelectSubtitleLanguageTargets();
     if (
       configuredPreferenceMode !== "off" &&
       !this.startupAudioPreferenceApplied &&
@@ -14423,6 +14702,11 @@ export const PlayerScreen = {
         value: formatSubtitleDelay(this.subtitleDelayMs)
       },
       {
+        id: "resetDelay",
+        label: t("subtitle_delay_reset", {}, "Reset Delay"),
+        value: ""
+      },
+      {
         id: "fontSize",
         label: t("subtitle_style_font_size", {}, "Font Size"),
         value: `${normalizeSubtitleFontSize(style.fontSize)}%`
@@ -14509,6 +14793,8 @@ export const PlayerScreen = {
         SUBTITLE_DELAY_MIN_MS,
         SUBTITLE_DELAY_MAX_MS
       );
+    } else if (controlId === "resetDelay") {
+      this.subtitleDelayMs = 0;
     } else if (controlId === "fontSize") {
       style.fontSize = normalizeSubtitleFontSize(
         Number(style.fontSize || 120) + delta * SUBTITLE_FONT_STEP
@@ -16189,16 +16475,24 @@ export const PlayerScreen = {
     this.resetControlsAutoHide();
   },
 
-  applyPlaybackSpeed(speed = 1) {
-    const applied =
-      typeof PlayerController.setPlaybackRate === "function"
-        ? PlayerController.setPlaybackRate(speed)
-        : false;
+  async applyPlaybackSpeed(speed = 1) {
+    let applied = false;
+    try {
+      applied =
+        typeof PlayerController.setPlaybackRate === "function"
+          ? await PlayerController.setPlaybackRate(speed)
+          : false;
+    } catch (_) {
+      applied = false;
+    }
     if (!applied) {
-      return;
+      this.renderControlButtons();
+      this.renderSpeedDialog();
+      return false;
     }
     this.renderControlButtons();
     this.renderSpeedDialog();
+    return true;
   },
 
   renderSpeedDialog() {
@@ -16258,9 +16552,9 @@ export const PlayerScreen = {
     );
   },
 
-  getSourceFilters() {
+  getSourceFilters(orderedStreams = this.getOrderedStreamCandidates()) {
     const addons = [];
-    this.getOrderedStreamCandidates().forEach((stream) => {
+    orderedStreams.forEach((stream) => {
       const addonName = String(stream?.addonName || "").trim();
       if (addonName && !addons.includes(addonName)) {
         addons.push(addonName);
@@ -16283,17 +16577,16 @@ export const PlayerScreen = {
       .map((entry) => entry.stream);
   },
 
-  getFilteredSources() {
-    const ordered = this.getOrderedStreamCandidates();
+  getFilteredSources(orderedStreams = this.getOrderedStreamCandidates()) {
     if (this.sourceFilter === "all") {
-      return ordered;
+      return orderedStreams;
     }
-    return ordered.filter((stream) => stream.addonName === this.sourceFilter);
+    return orderedStreams.filter((stream) => stream.addonName === this.sourceFilter);
   },
 
-  ensureSourcesFocus() {
-    const filters = this.getSourceFilters();
-    const list = this.getFilteredSources();
+  ensureSourcesFocus(filters = null, list = null) {
+    const availableFilters = Array.isArray(filters) ? filters : this.getSourceFilters();
+    const availableSources = Array.isArray(list) ? list : this.getFilteredSources();
 
     if (!this.sourcesFocus || !["top", "filter", "list"].includes(this.sourcesFocus.zone)) {
       this.sourcesFocus = { zone: "filter", index: 0 };
@@ -16305,12 +16598,20 @@ export const PlayerScreen = {
     }
 
     if (this.sourcesFocus.zone === "filter") {
-      this.sourcesFocus.index = clamp(this.sourcesFocus.index, 0, Math.max(0, filters.length - 1));
+      this.sourcesFocus.index = clamp(
+        this.sourcesFocus.index,
+        0,
+        Math.max(0, availableFilters.length - 1)
+      );
       return;
     }
 
-    this.sourcesFocus.index = clamp(this.sourcesFocus.index, 0, Math.max(0, list.length - 1));
-    if (!list.length && filters.length) {
+    this.sourcesFocus.index = clamp(
+      this.sourcesFocus.index,
+      0,
+      Math.max(0, availableSources.length - 1)
+    );
+    if (!availableSources.length && availableFilters.length) {
       this.sourcesFocus = { zone: "filter", index: 0 };
     }
   },
@@ -16482,12 +16783,13 @@ export const PlayerScreen = {
       return;
     }
 
-    const filters = this.getSourceFilters();
-    const filtered = this.getFilteredSources();
+    const orderedSources = this.getOrderedStreamCandidates();
+    const filters = this.getSourceFilters(orderedSources);
+    const filtered = this.getFilteredSources(orderedSources);
     const badgeSettings = StreamBadgeSettingsStore.snapshot();
     const showAddonLogo = badgeSettings.showAddonLogo === true;
     const badgePlacement = resolvePlayerSourceBadgePlacement(badgeSettings);
-    this.ensureSourcesFocus();
+    this.ensureSourcesFocus(filters, filtered);
 
     panel.innerHTML = `
       <div class="player-sources-header">
@@ -16579,9 +16881,41 @@ export const PlayerScreen = {
     }
   },
 
+  syncSourcesFocusDom() {
+    const panel = this.uiRefs?.sourcesPanel;
+    if (!panel || !this.sourcesPanelVisible) {
+      return;
+    }
+
+    const zone = String(this.sourcesFocus?.zone || "filter");
+    const index = Number(this.sourcesFocus?.index || 0);
+    const focusedNode = panel.querySelector(
+      `[data-sources-zone="${zone}"][data-sources-index="${index}"]`
+    );
+    // Source/filter data can change asynchronously while the panel is open.
+    // If the live DOM no longer represents the state, retain the existing full
+    // render path so content and focus cannot become misaligned.
+    if (!focusedNode) {
+      this.renderSourcesPanel();
+      return;
+    }
+
+    panel.querySelectorAll("[data-sources-zone].focused").forEach((node) => {
+      if (node !== focusedNode) {
+        node.classList.remove("focused");
+      }
+    });
+    focusedNode.classList.add("focused");
+    if (focusedNode.classList.contains("player-source-card")) {
+      focusedNode.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  },
+
   moveSourcesFocus(direction) {
-    const filters = this.getSourceFilters();
-    const list = this.getFilteredSources();
+    const orderedSources = this.getOrderedStreamCandidates();
+    const filters = this.getSourceFilters(orderedSources);
+    const list = this.getFilteredSources(orderedSources);
+    this.ensureSourcesFocus(filters, list);
     const zone = this.sourcesFocus.zone;
     let index = Number(this.sourcesFocus.index || 0);
 
@@ -16659,8 +16993,9 @@ export const PlayerScreen = {
   async activateSourcesFocus() {
     const zone = this.sourcesFocus.zone;
     const index = Number(this.sourcesFocus.index || 0);
-    const filters = this.getSourceFilters();
-    const list = this.getFilteredSources();
+    const orderedSources = this.getOrderedStreamCandidates();
+    const filters = this.getSourceFilters(orderedSources);
+    const list = this.getFilteredSources(orderedSources);
 
     if (zone === "top") {
       if (index === 0) {
@@ -16693,22 +17028,22 @@ export const PlayerScreen = {
 
     if (keyCode === 37) {
       this.moveSourcesFocus("left");
-      this.renderSourcesPanel();
+      this.syncSourcesFocusDom();
       return true;
     }
     if (keyCode === 39) {
       this.moveSourcesFocus("right");
-      this.renderSourcesPanel();
+      this.syncSourcesFocusDom();
       return true;
     }
     if (keyCode === 38) {
       this.moveSourcesFocus("up");
-      this.renderSourcesPanel();
+      this.syncSourcesFocusDom();
       return true;
     }
     if (keyCode === 40) {
       this.moveSourcesFocus("down");
-      this.renderSourcesPanel();
+      this.syncSourcesFocusDom();
       return true;
     }
     if (isSelectKeyCode(keyCode)) {
@@ -17845,13 +18180,22 @@ export const PlayerScreen = {
         return;
       }
 
-      if (PlayerSettingsStore.get().addonSubtitleStartupMode === "PREFERRED_ONLY") {
+      const subtitleSettings = PlayerSettingsStore.get();
+      const preferredOnly =
+        subtitleSettings.addonSubtitleStartupMode === "PREFERRED_ONLY" ||
+        (subtitleSettings.addonSubtitleStartupMode === "ALL_SUBTITLES" &&
+          subtitleSettings.subtitleStyle?.showOnlyPreferredLanguages);
+      if (preferredOnly) {
         const preferredTargets = new Set(this.getStartupPreferredSubtitleLanguageTargets());
         repositorySubtitles = repositorySubtitles.filter((entry) => {
           const language = normalizeSubtitleLanguageKey(
             entry?.lang || entry?.language || entry?.languageCode || ""
           );
-          return preferredTargets.has(language) || Boolean(entry?.forced);
+          return Array.from(preferredTargets).some((target) => {
+            if (language === target) return true;
+            if (target === "pt" || target === "es") return false;
+            return language.startsWith(`${target}-`);
+          });
         });
       }
 
@@ -17919,13 +18263,13 @@ export const PlayerScreen = {
     if (this.controlFocusZone === "progress") {
       this.controlFocusZone = "buttons";
       this.controlFocusIndex = delta < 0 ? 0 : 0;
-      this.renderControlButtons();
+      this.syncControlFocusDom();
       return;
     }
     const nextIndex = clamp(this.controlFocusIndex + delta, 0, controls.length - 1);
     this.controlFocusZone = "buttons";
     this.controlFocusIndex = nextIndex;
-    this.renderControlButtons();
+    this.syncControlFocusDom();
     this.resetControlsAutoHide();
   },
 
@@ -18706,7 +19050,7 @@ export const PlayerScreen = {
         this.stickyProgressFocus = false;
         this.autoHideControlsAfterSeek = false;
         this.controlFocusZone = "buttons";
-        this.renderControlButtons();
+        this.syncControlFocusDom();
         return;
       }
       if (isSelectKeyCode(keyCode)) {
