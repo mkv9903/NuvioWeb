@@ -6,10 +6,20 @@ import { watchProgressRepository } from "../../../data/repository/watchProgressR
 import { isWatchProgressInProgress } from "../../../domain/model/watchProgress.js";
 import { PlayerSettingsStore } from "../../../data/local/playerSettingsStore.js";
 import { StreamPreferencesStore } from "../../../data/local/streamPreferencesStore.js";
+import { PluginManager } from "../../../core/player/pluginManager.js";
+import {
+  PLUGIN_REPOSITORY_TYPES,
+  isExecutableScraper,
+  pluginSupportsType
+} from "../../../core/player/pluginModels.js";
 import {
   selectAutoPlayStream,
   isAutoPlayEffectivelyEnabled
 } from "../../../core/streams/streamAutoPlaySelector.js";
+import {
+  orderSourceNames,
+  orderStreamsByAddonOrder
+} from "../../../core/streams/streamOrdering.js";
 import { buildStreamResumeIdentity } from "../../../core/streams/streamResumeIdentity.js";
 import { DirectDebridResolver } from "../../../core/debrid/directDebridResolver.js";
 import {
@@ -39,8 +49,10 @@ import {
   resolveAddonLogo
 } from "../../../core/media/addonLogoCache.js";
 import { Environment } from "../../../platform/environment.js";
+import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 import { WebOsLunaService } from "../../../platform/webos/webosLunaService.js";
 import { I18n } from "../../../i18n/index.js";
+import { localizedGenreText } from "../../../i18n/genreLabels.js";
 import {
   matchStreamBadges,
   normalizeStreamBadgeChipColor,
@@ -48,13 +60,25 @@ import {
 } from "../../../core/streams/streamBadgeRules.js";
 import { normalizeMathematicalAlphanumericSymbols } from "../../../core/streams/streamDisplayText.js";
 import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
+import {
+  buildStreamVirtualModel,
+  findStreamVirtualIndex,
+  getStreamScrollTopForIndex,
+  getStreamVirtualWindow,
+  STREAM_VIRTUALIZATION_DEFAULT_ROW_EXTENT,
+  STREAM_VIRTUALIZATION_MIN_WINDOW,
+  STREAM_VIRTUALIZATION_OVERSCAN_PX,
+  STREAM_VIRTUALIZATION_THRESHOLD
+} from "./streamVirtualizer.js";
+import { isStreamEmptyStateVisible } from "./streamEmptyState.js";
 
 const STREAM_BADGE_LIMIT = 9;
+const STREAM_DPAD_REPEAT_THROTTLE_MS = 112;
 // Number of rows on each side of the focused source to keep badge-hydrated.
 // Windowing by row index (instead of measuring every card) keeps a single
-// focus move O(1) in layout reads on TV browsers, where measuring every card
-// forced a full list reflow on each keypress in long source lists.
-const TV_STREAM_BADGE_WINDOW_ROWS = 24;
+// focus move O(1) in constrained TV/browser runtimes, where measuring every
+// card forced a full list reflow on each keypress in long source lists.
+const STREAM_BADGE_WINDOW_ROWS = 24;
 const WEBOS_NATIVE_PLAYER_APP_IDS = [
   "com.webos.app.mediadiscovery",
   "com.webos.app.photovideo",
@@ -68,6 +92,13 @@ function t(key, params = {}, fallback = key) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function isPerformanceConstrainedRuntime() {
+  return Boolean(
+    getTvRuntimePerformanceProfile().isPerformanceConstrained ||
+    globalThis.document?.body?.classList?.contains("performance-constrained")
+  );
 }
 
 function escapeHtml(value = "") {
@@ -299,6 +330,10 @@ function flattenStreams(streamResult) {
       const streamOrigin = {
         ...(group.streamOrigin || {}),
         ...(stream.streamOrigin || {}),
+        kind:
+          group.streamOrigin?.kind ||
+          stream.streamOrigin?.kind ||
+          (group.sourceProviderId || stream.sourceProviderId ? "plugin" : "addon"),
         addonId:
           stream.addonId ||
           group.addonId ||
@@ -631,62 +666,15 @@ function resolveStreamBadgePlacement(badgeSettings = null) {
 }
 
 function getOrderedFilterNames(sourceChips = [], streams = []) {
-  const ordered = [];
-  const sortedChips = (sourceChips || [])
-    .slice()
-    .sort(
-      (left, right) =>
-        Number(left?.orderIndex ?? Number.MAX_SAFE_INTEGER) -
-        Number(right?.orderIndex ?? Number.MAX_SAFE_INTEGER)
-    );
-  sortedChips.forEach((chip) => {
-    if (chip?.name && !ordered.includes(chip.name)) {
-      ordered.push(chip.name);
-    }
+  return orderSourceNames(streams, sourceChips, {
+    isDirectDebrid: (stream) => DebridStreamPresentation.isDirectDebrid(stream)
   });
-  const sortedStreams = (streams || [])
-    .map((stream, index) => ({ stream, index }))
-    .sort((left, right) => {
-      const leftOrder = Number(left.stream?.addonOrderIndex ?? Number.MAX_SAFE_INTEGER);
-      const rightOrder = Number(right.stream?.addonOrderIndex ?? Number.MAX_SAFE_INTEGER);
-      if (leftOrder !== rightOrder) {
-        return leftOrder - rightOrder;
-      }
-      return left.index - right.index;
-    })
-    .map((entry) => entry.stream);
-  sortedStreams.forEach((stream) => {
-    const addonName = String(stream?.addonName || "").trim();
-    if (addonName && !ordered.includes(addonName)) {
-      ordered.push(addonName);
-    }
-  });
-  return ordered;
 }
 
 function sortStreamsByAddonOrder(streams = [], sourceChips = []) {
-  const order = new Map();
-  (sourceChips || []).forEach((chip, index) => {
-    const name = String(chip?.name || "").trim();
-    if (name && !order.has(name)) {
-      order.set(name, index);
-    }
+  return orderStreamsByAddonOrder(streams, sourceChips, {
+    isDirectDebrid: (stream) => DebridStreamPresentation.isDirectDebrid(stream)
   });
-  return (streams || [])
-    .map((stream, index) => ({ stream, index }))
-    .sort((left, right) => {
-      const leftOrder = order.has(left.stream?.addonName)
-        ? order.get(left.stream.addonName)
-        : Number(left.stream?.addonOrderIndex ?? Number.MAX_SAFE_INTEGER);
-      const rightOrder = order.has(right.stream?.addonName)
-        ? order.get(right.stream.addonName)
-        : Number(right.stream?.addonOrderIndex ?? Number.MAX_SAFE_INTEGER);
-      if (leftOrder !== rightOrder) {
-        return leftOrder - rightOrder;
-      }
-      return left.index - right.index;
-    })
-    .map((entry) => entry.stream);
 }
 
 export const StreamScreen = {
@@ -703,6 +691,425 @@ export const StreamScreen = {
       cancelAnimationFrame(this.streamBadgeHydrationFrame);
       this.streamBadgeHydrationFrame = null;
     }
+    this.cancelStreamVirtualizationWork();
+  },
+
+  cancelStreamVirtualizationWork() {
+    if (this.streamVirtualSyncFrame) {
+      if (this.streamVirtualSyncFrameType === "timeout") {
+        clearTimeout(this.streamVirtualSyncFrame);
+      } else if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(this.streamVirtualSyncFrame);
+      }
+      this.streamVirtualSyncFrame = null;
+      this.streamVirtualSyncFrameType = "";
+    }
+    if (this.streamVirtualMeasureFrame) {
+      if (this.streamVirtualMeasureFrameType === "timeout") {
+        clearTimeout(this.streamVirtualMeasureFrame);
+      } else if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(this.streamVirtualMeasureFrame);
+      }
+      this.streamVirtualMeasureFrame = null;
+      this.streamVirtualMeasureFrameType = "";
+    }
+  },
+
+  disconnectStreamVirtualResizeObserver() {
+    if (this.streamVirtualResizeObserver) {
+      this.streamVirtualResizeObserver.disconnect();
+      this.streamVirtualResizeObserver = null;
+    }
+  },
+
+  stopStreamVirtualization() {
+    this.cancelStreamVirtualizationWork();
+    this.disconnectStreamVirtualResizeObserver();
+    this.streamVirtualized = false;
+    this.streamVirtualItems = [];
+    this.streamVirtualKeys = [];
+    this.streamVirtualKeyCache = null;
+    this.streamVirtualModel = null;
+    this.streamVirtualWindow = null;
+    this.streamVirtualRowGap = null;
+    this.streamVirtualPreferredIndex = null;
+    this.streamVirtualSyncForce = false;
+    this.streamVirtualPendingAnchor = null;
+  },
+
+  shouldUseStreamVirtualization(streams = []) {
+    // Keep ordinary-sized Tizen lists on the stable eager path. The Android
+    // LazyColumn equivalent is still used for genuinely long lists, where a
+    // full DOM would make every D-pad layout pass scale with result count.
+    return Array.isArray(streams) && streams.length > STREAM_VIRTUALIZATION_THRESHOLD;
+  },
+
+  getStreamVirtualKeys(streams = []) {
+    if (this.streamVirtualKeyCache?.streams === streams) {
+      return this.streamVirtualKeyCache.keys;
+    }
+    const occurrences = new Map();
+    const keys = (streams || []).map((stream, index) => {
+      const baseKey =
+        streamMergeKey(stream) ||
+        String(stream?.id || stream?.url || stream?.externalUrl || stream?.ytId || index);
+      const occurrence = Number(occurrences.get(baseKey) || 0);
+      occurrences.set(baseKey, occurrence + 1);
+      return `${baseKey}::${occurrence}`;
+    });
+    this.streamVirtualKeyCache = { streams, keys };
+    return keys;
+  },
+
+  getStreamVirtualRowGap() {
+    if (this.streamVirtualRowGap != null) {
+      return Number(this.streamVirtualRowGap);
+    }
+    const row = this.container?.querySelector?.(".stream-route-card-row[data-stream-row]");
+    if (row && typeof getComputedStyle === "function") {
+      const marginBottom = Number.parseFloat(getComputedStyle(row).marginBottom || "0");
+      if (Number.isFinite(marginBottom) && marginBottom >= 0) {
+        this.streamVirtualRowGap = marginBottom;
+        return marginBottom;
+      }
+    }
+    this.streamVirtualRowGap = this.isLegacyWebOsRoute() ? 10 : 18;
+    return this.streamVirtualRowGap;
+  },
+
+  getStreamVirtualModel(streams = this.streamVirtualItems) {
+    const keys = this.getStreamVirtualKeys(streams);
+    const rowGap = this.getStreamVirtualRowGap();
+    const sameKeys =
+      Array.isArray(this.streamVirtualKeys) &&
+      this.streamVirtualKeys.length === keys.length &&
+      this.streamVirtualKeys.every((key, index) => key === keys[index]);
+    if (
+      sameKeys &&
+      this.streamVirtualModel &&
+      Number(this.streamVirtualModel.rowGap || 0) === Number(rowGap || 0)
+    ) {
+      return this.streamVirtualModel;
+    }
+    const model = buildStreamVirtualModel(
+      keys,
+      this.streamVirtualHeights,
+      STREAM_VIRTUALIZATION_DEFAULT_ROW_EXTENT,
+      { rowGap, lastRowGap: 0 }
+    );
+    model.rowGap = rowGap;
+    model.lastRowGap = 0;
+    this.streamVirtualKeys = keys;
+    this.streamVirtualModel = model;
+    return model;
+  },
+
+  getStreamVirtualViewportHeight(listNode = null) {
+    const height = Number(listNode?.clientHeight || 0);
+    return height > 0 ? height : 720;
+  },
+
+  renderStreamVirtualMarkup(streams = [], streamBadgesEnabled = true, badgeSettings = null) {
+    this.streamVirtualItems = streams;
+    const model = this.getStreamVirtualModel(streams);
+    if (this.streamVirtualPendingAnchor) {
+      const anchorIndex = model.keys.indexOf(this.streamVirtualPendingAnchor.key);
+      if (anchorIndex >= 0) {
+        this.listScrollTop = Math.max(
+          0,
+          Number(model.offsets[anchorIndex] || 0) +
+            Number(this.streamVirtualPendingAnchor.offsetWithinRow || 0)
+        );
+      }
+      this.streamVirtualPendingAnchor = null;
+    }
+    const listNode = this.container?.querySelector?.(".stream-route-list");
+    const preferredValue = Number(this.streamVirtualPreferredIndex);
+    const preferredIndex =
+      this.streamVirtualPreferredIndex != null &&
+      this.streamVirtualPreferredIndex !== "" &&
+      Number.isFinite(preferredValue)
+        ? preferredValue
+        : null;
+    this.streamVirtualPreferredIndex = null;
+    const virtualWindow = getStreamVirtualWindow(model, {
+      scrollTop: Number(this.listScrollTop || 0),
+      viewportHeight: this.getStreamVirtualViewportHeight(listNode),
+      overscanPx: STREAM_VIRTUALIZATION_OVERSCAN_PX,
+      minWindow: STREAM_VIRTUALIZATION_MIN_WINDOW,
+      preferredIndex
+    });
+    this.streamVirtualWindow = virtualWindow;
+    const cards = [];
+    for (let index = virtualWindow.start; index <= virtualWindow.end; index += 1) {
+      cards.push(
+        this.renderStreamCard(streams[index], index, streamBadgesEnabled, badgeSettings, {
+          streamKey: model.keys[index],
+          virtualized: true,
+          virtualRowGap: model.rowGap,
+          virtualLast: index === streams.length - 1
+        })
+      );
+    }
+    return `
+      <div class="stream-route-virtual-track" data-stream-virtual-track data-stream-virtual-total="${virtualWindow.totalExtent}">
+        <div class="stream-route-virtual-spacer" data-stream-virtual-spacer="top" aria-hidden="true" style="height:${virtualWindow.topSpacer}px"></div>
+        <div class="stream-route-virtual-window" data-stream-virtual-window data-stream-virtual-start="${virtualWindow.start}" data-stream-virtual-end="${virtualWindow.end}">${cards.join("")}</div>
+        <div class="stream-route-virtual-spacer" data-stream-virtual-spacer="bottom" aria-hidden="true" style="height:${virtualWindow.bottomSpacer}px"></div>
+      </div>`;
+  },
+
+  requestStreamVirtualSync(preferredIndex = null, force = false) {
+    if (!this.streamVirtualized) {
+      return;
+    }
+    const preferredValue = Number(preferredIndex);
+    if (preferredIndex != null && preferredIndex !== "" && Number.isFinite(preferredValue)) {
+      this.streamVirtualPreferredIndex = preferredValue;
+    }
+    this.streamVirtualSyncForce = Boolean(this.streamVirtualSyncForce || force);
+    if (this.streamVirtualSyncFrame) {
+      return;
+    }
+    const run = () => {
+      this.streamVirtualSyncFrame = null;
+      this.streamVirtualSyncFrameType = "";
+      const targetIndex = this.streamVirtualPreferredIndex;
+      const shouldForce = Boolean(this.streamVirtualSyncForce);
+      this.streamVirtualPreferredIndex = null;
+      this.streamVirtualSyncForce = false;
+      this.syncStreamVirtualization(targetIndex, { force: shouldForce });
+    };
+    if (typeof requestAnimationFrame === "function") {
+      this.streamVirtualSyncFrameType = "raf";
+      this.streamVirtualSyncFrame = requestAnimationFrame(run);
+    } else {
+      this.streamVirtualSyncFrameType = "timeout";
+      this.streamVirtualSyncFrame = setTimeout(run, 0);
+    }
+  },
+
+  requestStreamVirtualMeasure() {
+    if (!this.streamVirtualized || this.streamVirtualMeasureFrame) {
+      return;
+    }
+    const run = () => {
+      this.streamVirtualMeasureFrame = null;
+      this.streamVirtualMeasureFrameType = "";
+      this.measureStreamVirtualRows();
+    };
+    if (typeof requestAnimationFrame === "function") {
+      this.streamVirtualMeasureFrameType = "raf";
+      this.streamVirtualMeasureFrame = requestAnimationFrame(run);
+    } else {
+      this.streamVirtualMeasureFrameType = "timeout";
+      this.streamVirtualMeasureFrame = setTimeout(run, 0);
+    }
+  },
+
+  observeStreamVirtualRows(windowNode) {
+    if (typeof ResizeObserver !== "function" || !windowNode) {
+      return;
+    }
+    if (!this.streamVirtualResizeObserver) {
+      this.streamVirtualResizeObserver = new ResizeObserver(() => {
+        this.requestStreamVirtualMeasure();
+      });
+    }
+    this.streamVirtualResizeObserver.disconnect();
+    windowNode.querySelectorAll(".stream-route-card-row[data-stream-row]").forEach((row) => {
+      this.streamVirtualResizeObserver.observe(row);
+    });
+  },
+
+  getMountedStreamVirtualRow(index) {
+    const windowNode = this.container?.querySelector?.("[data-stream-virtual-window]");
+    if (!windowNode) {
+      return null;
+    }
+    const expected = String(index);
+    return (
+      Array.from(windowNode.querySelectorAll(".stream-route-card-row[data-stream-row]")).find(
+        (row) => String(row.dataset.streamRow || "") === expected
+      ) || null
+    );
+  },
+
+  syncStreamVirtualization(preferredIndex = null, { force = false } = {}) {
+    if (!this.streamVirtualized || !this.container) {
+      return false;
+    }
+    const list = this.container.querySelector(".stream-route-list");
+    const track = list?.querySelector?.("[data-stream-virtual-track]");
+    const windowNode = track?.querySelector?.("[data-stream-virtual-window]");
+    if (!list || !track || !windowNode) {
+      return false;
+    }
+    const streams = this.getFilteredStreams();
+    this.streamVirtualItems = streams;
+    const model = this.getStreamVirtualModel(streams);
+    const previousScrollTop = this.getListScrollTop(list);
+    const virtualWindow = getStreamVirtualWindow(model, {
+      scrollTop: previousScrollTop,
+      viewportHeight: this.getStreamVirtualViewportHeight(list),
+      overscanPx: STREAM_VIRTUALIZATION_OVERSCAN_PX,
+      minWindow: STREAM_VIRTUALIZATION_MIN_WINDOW,
+      preferredIndex
+    });
+    const previousWindow = this.streamVirtualWindow;
+    const sameWindow =
+      previousWindow &&
+      previousWindow.start === virtualWindow.start &&
+      previousWindow.end === virtualWindow.end &&
+      Math.abs(previousWindow.topSpacer - virtualWindow.topSpacer) < 0.5 &&
+      Math.abs(previousWindow.bottomSpacer - virtualWindow.bottomSpacer) < 0.5;
+    if (!force && sameWindow && windowNode.childElementCount) {
+      return false;
+    }
+
+    const focused = this.focusedElement;
+    const restoreFocusedAction =
+      focused && list.contains(focused) ? String(focused.dataset?.cardAction || "play") : "";
+    windowNode.innerHTML = Array.from(
+      { length: Math.max(0, virtualWindow.end - virtualWindow.start + 1) },
+      (_, offset) => {
+        const index = virtualWindow.start + offset;
+        return this.renderStreamCard(
+          streams[index],
+          index,
+          DebridSettingsStore.get().streamBadgesEnabled !== false,
+          StreamBadgeSettingsStore.snapshot(),
+          {
+            streamKey: model.keys[index],
+            virtualized: true,
+            virtualRowGap: model.rowGap,
+            virtualLast: index === streams.length - 1
+          }
+        );
+      }
+    ).join("");
+    const topSpacer = track.querySelector('[data-stream-virtual-spacer="top"]');
+    const bottomSpacer = track.querySelector('[data-stream-virtual-spacer="bottom"]');
+    if (topSpacer) {
+      topSpacer.style.height = `${virtualWindow.topSpacer}px`;
+    }
+    if (bottomSpacer) {
+      bottomSpacer.style.height = `${virtualWindow.bottomSpacer}px`;
+    }
+    track.dataset.streamVirtualTotal = String(virtualWindow.totalExtent);
+    windowNode.dataset.streamVirtualStart = String(virtualWindow.start);
+    windowNode.dataset.streamVirtualEnd = String(virtualWindow.end);
+    this.streamVirtualWindow = virtualWindow;
+    this.streamFocusDomCache = null;
+    this.focusedElement = null;
+    ScreenUtils.indexFocusables(this.container, ".focusable:not([hidden])");
+    this.hydrateVisibleStreamBadges();
+    this.bindAddonLogoFallbacks();
+    this.observeStreamVirtualRows(windowNode);
+    this.requestStreamVirtualMeasure();
+
+    if (restoreFocusedAction) {
+      const restoredRow = this.getMountedStreamVirtualRow(this.focusState?.row);
+      const target = this.resolveCardActionForRow(restoredRow, restoreFocusedAction);
+      if (target) {
+        // The logical scroll anchor is restored by the caller after a measured
+        // window rebind. Do not run the regular visibility correction here as
+        // well, or focus restoration can overwrite that anchor on TV browsers.
+        this.focusElement(target, { ensureVisible: false });
+      }
+    }
+
+    // Rebinding the virtual window replaces the focused DOM subtree. Older TV
+    // Chromium builds may apply native scroll anchoring (or focus scrolling)
+    // after that replacement and move the list far beyond the logical row.
+    // Restore the logical position after focus has been restored so the
+    // virtualizer remains an implementation detail, like Android LazyColumn.
+    this.restoreStreamVirtualScrollPosition(list, previousScrollTop);
+    return true;
+  },
+
+  measureStreamVirtualRows() {
+    if (!this.streamVirtualized || !this.container) {
+      return;
+    }
+    const list = this.container.querySelector(".stream-route-list");
+    const windowNode = list?.querySelector?.("[data-stream-virtual-window]");
+    if (!list || !windowNode) {
+      return;
+    }
+    if (!(this.streamVirtualHeights instanceof Map)) {
+      this.streamVirtualHeights = new Map();
+    }
+    let changed = false;
+    windowNode.querySelectorAll(".stream-route-card-row[data-stream-row]").forEach((row) => {
+      const key = String(row.dataset.streamKey || "");
+      const height = Number(row.offsetHeight || 0);
+      if (!key || !Number.isFinite(height) || height <= 0) {
+        return;
+      }
+      const previous = Number(this.streamVirtualHeights.get(key) || 0);
+      if (Math.abs(previous - height) > 0.5) {
+        this.streamVirtualHeights.set(key, height);
+        changed = true;
+      }
+    });
+    if (!changed) {
+      return;
+    }
+
+    const previousModel = this.streamVirtualModel;
+    const previousScrollTop = this.getListScrollTop(list);
+    const previousAnchorIndex = previousModel
+      ? findStreamVirtualIndex(previousModel.offsets, previousScrollTop)
+      : -1;
+    const previousAnchorKey =
+      previousAnchorIndex >= 0 ? previousModel.keys[previousAnchorIndex] : "";
+    const previousAnchorOffset =
+      previousAnchorIndex >= 0 ? Number(previousModel.offsets[previousAnchorIndex] || 0) : 0;
+    this.streamVirtualModel = null;
+    const model = this.getStreamVirtualModel(this.streamVirtualItems);
+    this.streamVirtualWindow = null;
+    this.syncStreamVirtualization(null, { force: true });
+    if (previousAnchorKey) {
+      const nextAnchorIndex = model.keys.indexOf(previousAnchorKey);
+      if (nextAnchorIndex >= 0) {
+        const anchorOffset = previousScrollTop - previousAnchorOffset;
+        const nextScrollTop = Math.max(
+          0,
+          Number(model.offsets[nextAnchorIndex] || 0) + anchorOffset
+        );
+        if (Math.abs(nextScrollTop - previousScrollTop) > 0.5) {
+          this.setListScrollTop(list, nextScrollTop);
+          this.requestStreamVirtualSync();
+        }
+      }
+    }
+  },
+
+  ensureStreamVirtualRowMounted(index) {
+    if (!this.streamVirtualized || !this.container) {
+      return false;
+    }
+    const list = this.container.querySelector(".stream-route-list");
+    if (!list) {
+      return false;
+    }
+    const model = this.getStreamVirtualModel(this.streamVirtualItems);
+    const rowIndex = clamp(Number(index || 0), 0, Math.max(0, model.keys.length - 1));
+    if (this.getMountedStreamVirtualRow(rowIndex)) {
+      return true;
+    }
+    const currentScrollTop = this.getListScrollTop(list);
+    const nextScrollTop = getStreamScrollTopForIndex(model, rowIndex, {
+      currentScrollTop,
+      viewportHeight: this.getStreamVirtualViewportHeight(list),
+      padding: 16
+    });
+    if (Math.abs(nextScrollTop - currentScrollTop) > 0.5) {
+      this.setListScrollTop(list, nextScrollTop);
+    }
+    this.syncStreamVirtualization(rowIndex, { force: true });
+    return Boolean(this.getMountedStreamVirtualRow(rowIndex));
   },
 
   requestRender({ delayMs = 0 } = {}) {
@@ -854,15 +1261,24 @@ export const StreamScreen = {
   },
 
   navigateBackFromStream() {
+    if (this.streamBackNavigationInProgress) {
+      // A pending history pop is the first Back transition. Do not let a
+      // duplicate Tizen event turn it into the next Android stack transition.
+      return "history";
+    }
     const itemId = String(this.params?.itemId || "").trim();
     if (!itemId) {
       return false;
     }
+    this.streamBackNavigationInProgress = true;
     const itemType = normalizeType(this.params?.itemType);
     const isSeries = itemType === "series" || itemType === "tv";
     if (this.params?.continueWatchingBackHome && !isSeries) {
       // Android returns movies opened from Continue Watching straight Home;
       // only episodic content reconstructs a Detail route on Back.
+      if (Router.popToExistingRoute?.("home", {})) {
+        return "history";
+      }
       void Router.navigate(
         "home",
         {},
@@ -874,31 +1290,31 @@ export const StreamScreen = {
       );
       return true;
     }
-    void Router.navigate(
-      "detail",
-      {
-        itemId,
-        itemType,
-        imdbId: this.params?.imdbId || null,
-        tmdbId: this.params?.tmdbId || null,
-        traktId: this.params?.traktId || null,
-        originalItemId: this.params?.originalItemId || null,
-        fallbackTitle: this.params?.itemTitle || this.params?.playerTitle || "Untitled",
-        returnToSearchOnBack: Boolean(this.params?.returnToSearchOnBack),
-        returnHomeOnBack: Boolean(
-          !this.params?.returnToSearchOnBack &&
-          (this.params?.continueWatchingBackHome ||
-            this.params?.returnHomeOnBack ||
-            this.params?.returnToDetail ||
-            this.params?.fromDetailRoute)
-        )
-      },
-      {
-        skipStackPush: true,
-        replaceHistory: true,
-        isBackNavigation: true
-      }
-    );
+    const detailParams = {
+      itemId,
+      itemType,
+      imdbId: this.params?.imdbId || null,
+      tmdbId: this.params?.tmdbId || null,
+      traktId: this.params?.traktId || null,
+      originalItemId: this.params?.originalItemId || null,
+      fallbackTitle: this.params?.itemTitle || this.params?.playerTitle || "Untitled",
+      returnToSearchOnBack: Boolean(this.params?.returnToSearchOnBack),
+      returnHomeOnBack: Boolean(
+        !this.params?.returnToSearchOnBack &&
+        (this.params?.continueWatchingBackHome ||
+          this.params?.returnHomeOnBack ||
+          this.params?.returnToDetail ||
+          this.params?.fromDetailRoute)
+      )
+    };
+    if (Router.popToExistingRoute?.("detail", detailParams)) {
+      return "history";
+    }
+    void Router.navigate("detail", detailParams, {
+      skipStackPush: true,
+      replaceHistory: true,
+      isBackNavigation: true
+    });
     return true;
   },
 
@@ -927,6 +1343,11 @@ export const StreamScreen = {
     this.container = document.getElementById("stream");
     ScreenUtils.show(this.container);
     this.params = params || {};
+    this.streamBackNavigationInProgress = false;
+    this.stopStreamVirtualization();
+    this.streamVirtualHeights = new Map();
+    this.streamVirtualFocusReset = false;
+    this.streamLastNavigationRepeatAt = 0;
     this.loadToken = (this.loadToken || 0) + 1;
     const token = this.loadToken;
     this.focusState = { zone: "filter", index: 0 };
@@ -938,6 +1359,9 @@ export const StreamScreen = {
     this.addonLogoLookup = {};
     this.addonFilter = "all";
     this.hasRenderedStreamRouteShell = false;
+    this.renderedStreamListStable = false;
+    this.renderedStreamListStreams = null;
+    this.renderedStreamListSourceChips = null;
     // Returning here from the player is a back navigation, not a fresh open, so
     // do not auto-resume or auto-play again. Otherwise exiting the player drops
     // back onto the stream list and immediately relaunches, looping forever.
@@ -1103,6 +1527,32 @@ export const StreamScreen = {
         .sort((left, right) => Number(left.orderIndex || 0) - Number(right.orderIndex || 0));
     };
 
+    if (PluginManager.pluginsEnabled) {
+      const repositoriesById = new Map(
+        PluginManager.listRepositories().map((repository) => [repository.id, repository])
+      );
+      const pluginNames = PluginManager.listScrapers()
+        .filter((scraper) => {
+          const repository = repositoriesById.get(scraper?.repositoryId);
+          return (
+            scraper?.type === PLUGIN_REPOSITORY_TYPES.NUVIO_JS &&
+            isExecutableScraper(scraper, repository) &&
+            pluginSupportsType(scraper.supportedTypes, itemType)
+          );
+        })
+        .map((scraper) => {
+          const repository = repositoriesById.get(scraper.repositoryId);
+          return PluginManager.groupStreamsByRepository
+            ? String(repository?.name || scraper.name || "").trim()
+            : String(scraper.name || "").trim();
+        })
+        .filter(Boolean)
+        .filter((name, index, names) => names.indexOf(name) === index);
+      pluginNames.forEach((name) => {
+        upsertSourceChip({ name, orderIndex: Number.MAX_SAFE_INTEGER }, "loading");
+      });
+    }
+
     const markSuccessfulSources = (names = []) => {
       if (!Array.isArray(names) || !names.length) {
         return;
@@ -1171,7 +1621,6 @@ export const StreamScreen = {
         return;
       }
       this.streams = mergeStreamItems(this.streams, chunkStreams);
-      this.scheduleDebridPreparation();
       markSuccessfulSources(
         groups.map((group) => ({
           name: group?.addonName || "",
@@ -1179,11 +1628,16 @@ export const StreamScreen = {
           orderIndex: group?.addonOrderIndex
         }))
       );
+      this.streams = sortStreamsByAddonOrder(this.streams, this.sourceChips);
+      this.scheduleDebridPreparation();
       if (this.streams.length && this.focusState?.zone !== "card") {
         this.focusState = { zone: "card", row: 0, action: "play" };
       }
       this.requestRender({ delayMs: 120 });
       this.maybeAutoResumeStream();
+      // Keep Android's timeout semantics: instant/bounded auto-play may select
+      // from the streams available when its wait window expires. The list
+      // itself is already source-ordered by sortStreamsByAddonOrder().
       this.maybeAutoPlayStream();
     };
 
@@ -1253,8 +1707,9 @@ export const StreamScreen = {
         }
         this.streams = mergeStreamItems(this.streams, missingStreams);
       }
-      this.scheduleDebridPreparation();
       markSuccessfulSources(this.streams.map((stream) => stream.addonName));
+      this.streams = sortStreamsByAddonOrder(this.streams, this.sourceChips);
+      this.scheduleDebridPreparation();
       if (this.streams.length && showAddonLogo) {
         await preloadAddonLogoImages(this.streams, this.addonLogoLookup);
       }
@@ -1524,8 +1979,11 @@ export const StreamScreen = {
       return;
     }
     this.errorChipTimer = setTimeout(() => {
+      this.errorChipTimer = null;
       this.sourceChips = this.sourceChips.filter((chip) => chip.status !== "error");
-      this.requestRender();
+      if (!this.refreshSourceChipsOnly()) {
+        this.requestRender();
+      }
     }, 1600);
   },
 
@@ -1550,7 +2008,7 @@ export const StreamScreen = {
     const orderedStreams = sortStreamsByAddonOrder(this.streams, this.sourceChips);
     const result =
       filter === "all"
-        ? DebridStreamPresentation.sortForDisplay(orderedStreams, DebridSettingsStore.get())
+        ? orderedStreams
         : orderedStreams.filter((stream) => stream.addonName === filter);
     this._filteredStreamsCache = {
       streams: this.streams,
@@ -1562,8 +2020,11 @@ export const StreamScreen = {
   },
 
   hasPendingSourceLoads(filter = this.addonFilter) {
+    if (this.loading) {
+      return true;
+    }
     if (!Array.isArray(this.sourceChips) || !this.sourceChips.length) {
-      return Boolean(this.loading);
+      return false;
     }
     if (filter === "all") {
       return this.sourceChips.some((chip) => chip.status === "loading");
@@ -1573,12 +2034,15 @@ export const StreamScreen = {
 
   setAddonFilter(nextFilter, preferredZone = "filter", preferredIndex = 0) {
     const targetFilter = String(nextFilter || "all");
+    const filterChanged = targetFilter !== this.addonFilter;
     this.addonFilter = targetFilter;
     const filtered = this.getFilteredStreams(targetFilter);
     if (preferredZone === "card" && filtered.length) {
       this.focusState = {
         zone: "card",
-        row: clamp(preferredIndex, 0, filtered.length - 1),
+        // Carrying the previous row index into a different source's list picks
+        // an unrelated stream. Each tab is its own list, so start at the top.
+        row: filterChanged ? 0 : clamp(preferredIndex, 0, filtered.length - 1),
         action: "play"
       };
     } else {
@@ -1588,8 +2052,146 @@ export const StreamScreen = {
         index: clamp(ordered.indexOf(targetFilter), 0, Math.max(0, ordered.length - 1))
       };
     }
-    this.listScrollTop = 0;
+    // Android's LazyColumn effect is keyed by the selected addon, so
+    // reselecting the active chip does not jump the list back to the top.
+    if (filterChanged) {
+      this.listScrollTop = 0;
+      this.streamVirtualFocusReset = true;
+    }
+    if (preferredZone === "card" && filtered.length) {
+      this.streamVirtualPreferredIndex = filterChanged
+        ? 0
+        : clamp(preferredIndex, 0, filtered.length - 1);
+    }
+    if (this.applyAddonFilterInPlace({ filterChanged })) {
+      return;
+    }
     this.render();
+  },
+
+  applyAddonFilterDomState(filtered = [], allStreams = []) {
+    const list = this.container?.querySelector(".stream-route-list");
+    if (!list || !Array.isArray(filtered) || !Array.isArray(allStreams)) {
+      return false;
+    }
+
+    const targetFilter = String(this.addonFilter || "all");
+    // The All tab is defined by the complete stream list. Keep this explicit
+    // so a stale filtered cache can never leave All with hidden cards and a
+    // misleading empty state.
+    const visibleStreams = targetFilter === "all" ? allStreams : filtered;
+
+    const rows = Array.from(list.querySelectorAll(".stream-route-card-row[data-stream-key]"));
+    if (rows.length !== allStreams.length) {
+      return false;
+    }
+
+    const rowsByKey = new Map(rows.map((row) => [String(row.dataset.streamKey || ""), row]));
+    const streamIndices = new Map();
+    allStreams.forEach((stream, index) => {
+      const indices = streamIndices.get(stream) || [];
+      indices.push(index);
+      streamIndices.set(stream, indices);
+    });
+    const streamOccurrences = new Map();
+    const visibleRows = [];
+    for (const stream of visibleStreams) {
+      const indices = streamIndices.get(stream) || [];
+      const occurrence = Number(streamOccurrences.get(stream) || 0);
+      const row = rowsByKey.get(String(indices[occurrence] ?? ""));
+      if (!row) {
+        return false;
+      }
+      streamOccurrences.set(stream, occurrence + 1);
+      visibleRows.push(row);
+    }
+
+    const visibleRowIndexes = new Map(visibleRows.map((row, index) => [row, index]));
+    rows.forEach((row) => {
+      const rowIndex = visibleRowIndexes.get(row);
+      const visible = rowIndex != null;
+      row.hidden = !visible;
+      row.style.display = visible ? "" : "none";
+      row.dataset.streamRow = String(visible ? rowIndex : -1);
+      const card = row.querySelector("[data-card-action]");
+      if (card) {
+        card.hidden = !visible;
+        card.style.display = visible ? "" : "none";
+        card.dataset.streamRow = String(visible ? rowIndex : -1);
+      }
+      row.querySelectorAll("[data-lazy-stream-badges]").forEach((placeholder) => {
+        placeholder.dataset.streamBadgeRow = String(visible ? rowIndex : -1);
+      });
+    });
+
+    // Appending existing keyed rows changes only their order; it does not
+    // reparse the card markup. This is the Web equivalent of Android's
+    // LazyColumn retaining keyed items while the filtered state changes.
+    visibleRows.forEach((row) => list.appendChild(row));
+
+    this.container?.querySelectorAll(".stream-route-chip[data-addon]").forEach((chip) => {
+      const selected = String(chip.dataset.addon || "all") === targetFilter;
+      chip.classList.toggle("selected", selected);
+      chip.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+
+    const loadingRow = list.querySelector("[data-stream-loading-row]");
+    if (loadingRow) {
+      const visible = this.hasPendingSourceLoads(targetFilter);
+      loadingRow.hidden = !visible;
+      loadingRow.style.display = visible ? "" : "none";
+    }
+    const emptyState = list.querySelector("[data-stream-empty]");
+    if (emptyState) {
+      const visible = isStreamEmptyStateVisible({
+        filteredStreams: visibleStreams,
+        isLoading: this.loading,
+        hasPendingSourceLoads: this.hasPendingSourceLoads("all")
+      });
+      emptyState.hidden = !visible;
+      emptyState.style.display = visible ? "" : "none";
+    }
+    if (loadingRow) {
+      list.appendChild(loadingRow);
+    }
+    if (emptyState) {
+      list.appendChild(emptyState);
+    }
+    return true;
+  },
+
+  applyAddonFilterInPlace({ filterChanged = true } = {}) {
+    if (
+      !this.renderedStreamListStable ||
+      this.renderedStreamListStreams !== this.streams ||
+      this.renderedStreamListSourceChips !== this.sourceChips ||
+      this.renderFrame ||
+      this.renderDelayTimer
+    ) {
+      return false;
+    }
+    const allStreams = this.getFilteredStreams("all");
+    const filtered = this.getFilteredStreams();
+    if (!this.applyAddonFilterDomState(filtered, allStreams)) {
+      return false;
+    }
+    if (!filterChanged) {
+      this.streamFocusDomCache = null;
+      this.hydrateVisibleStreamBadges();
+      this.restoreScrollPosition();
+      this.applyFocus();
+      return true;
+    }
+    this.renderedMarkup = null;
+    this.streamFocusDomCache = null;
+    this.restoreScrollPosition();
+    this.hydrateVisibleStreamBadges();
+    this.bindAddonLogoFallbacks();
+    ScreenUtils.indexFocusables(this.container, ".focusable:not([hidden])");
+    this.restoreScrollPosition();
+    this.applyFocus();
+    this.bindListScrollState();
+    return true;
   },
 
   resolveCardActionForRow(row = null, preferredAction = "play") {
@@ -1603,8 +2205,9 @@ export const StreamScreen = {
   },
 
   getCardRows() {
-    return Array.from(
-      this.container?.querySelectorAll(".stream-route-card-row[data-stream-row]") || []
+    const rows = Array.from(
+      this.container?.querySelectorAll(".stream-route-card-row[data-stream-row]:not([hidden])") ||
+        []
     )
       .map((rowNode) => ({
         row: Number(rowNode.dataset.streamRow || 0),
@@ -1612,6 +2215,17 @@ export const StreamScreen = {
         native: rowNode.querySelector('[data-card-action="native"]')
       }))
       .filter((row) => row.play || row.native);
+    if (!this.streamVirtualized) {
+      return rows;
+    }
+    const indexedRows = new Array(this.streamVirtualItems?.length || 0);
+    rows.forEach((row) => {
+      const rowIndex = Number(row.row);
+      if (rowIndex >= 0 && rowIndex < indexedRows.length) {
+        indexedRows[rowIndex] = row;
+      }
+    });
+    return indexedRows;
   },
 
   isCardActionFocused(rowIndex, action) {
@@ -1622,7 +2236,7 @@ export const StreamScreen = {
     );
   },
 
-  focusElement(target) {
+  focusElement(target, { ensureVisible = true } = {}) {
     if (!target) {
       return false;
     }
@@ -1660,7 +2274,7 @@ export const StreamScreen = {
     }
 
     const listNode = target.closest(".stream-route-list");
-    if (listNode) {
+    if (listNode && ensureVisible) {
       this.ensureListItemVisible(listNode, target);
       this.listScrollTop = this.getListScrollTop(listNode);
       this.scheduleFocusedListItemVisibilityCheck(listNode, target);
@@ -1688,7 +2302,10 @@ export const StreamScreen = {
   },
 
   shouldUseManualListScroll(listNode) {
-    if (!listNode || !Environment.isWebOS()) {
+    // The manual transform path is needed only by legacy webOS, matching the
+    // `.legacy-webos` CSS scope and the platform classification in app.js.
+    // Modern webOS and Tizen use the native scroller without touching every row.
+    if (!listNode || !Environment.isWebOS() || !this.isLegacyWebOsRoute()) {
       return false;
     }
     return Number(listNode.scrollHeight || 0) > Number(listNode.clientHeight || 0);
@@ -1732,44 +2349,96 @@ export const StreamScreen = {
     }
     this.updateManualListScrollTransform(listNode, normalized);
     this.listScrollTop = normalized;
+    this.requestStreamVirtualSync();
   },
 
   setListScrollTop(listNode, nextScrollTop) {
     if (!listNode) {
       return;
     }
-    const maxScrollTop = Math.max(
-      0,
-      Number(listNode.scrollHeight || 0) - Number(listNode.clientHeight || 0)
-    );
-    const normalized = clamp(Number(nextScrollTop || 0), 0, maxScrollTop);
+    const usesManualScroll =
+      Boolean(listNode.classList?.contains("manual-scroll")) ||
+      this.shouldUseManualListScroll(listNode);
+    if (usesManualScroll) {
+      const maxScrollTop = Math.max(
+        0,
+        Number(listNode.scrollHeight || 0) - Number(listNode.clientHeight || 0)
+      );
+      this.applyManualListScroll(listNode, clamp(Number(nextScrollTop || 0), 0, maxScrollTop));
+      return;
+    }
+
+    const isModernWebOsNativeScroll = Environment.isWebOS() && !this.isLegacyWebOsRoute();
+    if (!isModernWebOsNativeScroll) {
+      const maxScrollTop = Math.max(
+        0,
+        Number(listNode.scrollHeight || 0) - Number(listNode.clientHeight || 0)
+      );
+      const normalized = clamp(Number(nextScrollTop || 0), 0, maxScrollTop);
+      listNode.scrollTop = normalized;
+      if (typeof listNode.scrollTo === "function") {
+        try {
+          listNode.scrollTo(0, normalized);
+        } catch (_) {
+          listNode.scrollTop = normalized;
+        }
+      }
+      const applied = Number(listNode.scrollTop || 0);
+      if (
+        this.isLegacyWebOsRoute() &&
+        maxScrollTop > 0 &&
+        normalized > 0 &&
+        Math.abs(applied - normalized) > 2
+      ) {
+        this.applyManualListScroll(listNode, normalized);
+        return;
+      }
+      this.listScrollTop = Number(applied || normalized || 0);
+      this.requestStreamVirtualSync();
+      return;
+    }
+
+    // Native scrollers clamp the assignment themselves. Avoid the extra
+    // scrollTo call and layout-forcing readback on long modern-TV lists.
+    const requestedValue = Number(nextScrollTop || 0);
+    const requested = Number.isFinite(requestedValue) ? Math.max(0, requestedValue) : 0;
+    listNode.scrollTop = requested;
+    this.listScrollTop = requested;
+    this.requestStreamVirtualSync();
+  },
+
+  restoreStreamVirtualScrollPosition(listNode, scrollTop) {
+    if (!listNode) {
+      return;
+    }
+    const requestedValue = Number(scrollTop || 0);
+    const requested = Number.isFinite(requestedValue) ? Math.max(0, requestedValue) : 0;
     if (listNode.classList?.contains("manual-scroll")) {
-      this.applyManualListScroll(listNode, normalized);
+      this.applyManualListScroll(listNode, requested);
       return;
     }
-    if (this.shouldUseManualListScroll(listNode)) {
-      this.applyManualListScroll(listNode, normalized);
-      return;
+    try {
+      listNode.scrollTop = requested;
+    } catch (_) {
+      // Keep the logical value when an older TV engine rejects the assignment.
     }
-    listNode.scrollTop = normalized;
-    if (typeof listNode.scrollTo === "function") {
+    const applied = Number(listNode.scrollTop);
+    this.listScrollTop = Number.isFinite(applied) ? applied : requested;
+    if (
+      Number.isFinite(applied) &&
+      Math.abs(applied - requested) > 1 &&
+      typeof listNode.scrollTo === "function"
+    ) {
       try {
-        listNode.scrollTo(0, normalized);
+        listNode.scrollTo(0, requested);
+        const afterScrollTo = Number(listNode.scrollTop);
+        if (Number.isFinite(afterScrollTo)) {
+          this.listScrollTop = afterScrollTo;
+        }
       } catch (_) {
-        listNode.scrollTop = normalized;
+        // Direct scrollTop assignment above remains the safe fallback.
       }
     }
-    const applied = Number(listNode.scrollTop || 0);
-    if (
-      this.isLegacyWebOsRoute() &&
-      maxScrollTop > 0 &&
-      normalized > 0 &&
-      Math.abs(applied - normalized) > 2
-    ) {
-      this.applyManualListScroll(listNode, normalized);
-      return;
-    }
-    this.listScrollTop = Number(applied || normalized || 0);
   },
 
   ensureListItemVisible(listNode, target) {
@@ -1834,25 +2503,42 @@ export const StreamScreen = {
     }
     const chips = Array.from(this.container.querySelectorAll(".stream-route-chip.focusable"));
     const rows = this.getCardRows();
-    const value = { chips, rows };
+    const value = {
+      chips,
+      rows,
+      rowCount: this.streamVirtualized ? this.streamVirtualItems.length : rows.length,
+      virtualized: this.streamVirtualized
+    };
     this.streamFocusDomCache = { listNode, value };
     return value;
   },
 
   applyFocus() {
-    const { chips, rows } = this.getFocusLists();
-    if (!chips.length && !rows.length) {
+    const { chips, rows, rowCount, virtualized } = this.getFocusLists();
+    if (!chips.length && !rowCount) {
       return;
     }
-    const zone = this.focusState?.zone || (rows.length ? "card" : "filter");
+    const zone = this.focusState?.zone || (rowCount ? "card" : "filter");
     const index = Number(this.focusState?.index || 0);
-    if (zone === "card" && rows.length) {
-      const rowIndex = clamp(Number(this.focusState?.row || 0), 0, rows.length - 1);
+    if (zone === "card" && rowCount) {
+      const rowIndex = clamp(Number(this.focusState?.row || 0), 0, rowCount - 1);
       const preferredAction = String(this.focusState?.action || "play");
+      if (virtualized && !rows[rowIndex]) {
+        this.ensureStreamVirtualRowMounted(rowIndex);
+        this.streamFocusDomCache = null;
+        const mountedRows = this.getCardRows();
+        if (!mountedRows[rowIndex]) {
+          this.requestStreamVirtualSync(rowIndex, true);
+          return;
+        }
+        rows[rowIndex] = mountedRows[rowIndex];
+      }
       const target = this.resolveCardActionForRow(rows[rowIndex], preferredAction);
       const resolvedAction = target?.dataset?.cardAction || "play";
       this.focusState = { zone: "card", row: rowIndex, action: resolvedAction };
-      this.focusElement(target);
+      if (target) {
+        this.focusElement(target);
+      }
       return;
     }
     this.focusState = { zone: "filter", index: clamp(index, 0, Math.max(0, chips.length - 1)) };
@@ -1876,7 +2562,7 @@ export const StreamScreen = {
     const episodeLabel = normalizeEpisodeCode(this.params?.season, this.params?.episode);
     const detailLine = isSeries
       ? ""
-      : [String(this.params?.genres || "").trim(), String(this.params?.year || "").trim()]
+      : [localizedGenreText(this.params?.genres), String(this.params?.year || "").trim()]
           .filter(Boolean)
           .join(" • ");
     return { isSeries, title, subtitle, episodeLabel, detailLine };
@@ -2153,6 +2839,74 @@ export const StreamScreen = {
     }
   },
 
+  buildSourceChipMarkup() {
+    return [
+      this.renderChip("all", this.addonFilter === "all", "success"),
+      ...this.getOrderedFilterNames().map((name) => {
+        const chip = this.sourceChips.find((entry) => entry.name === name) || {
+          name,
+          status: "success"
+        };
+        return this.renderChip(name, this.addonFilter === name, chip.status);
+      })
+    ].join("");
+  },
+
+  // Clearing an error status changes only the source-chip row. Keep the stream
+  // cards and their scroll/focus state intact instead of rebuilding the route.
+  refreshSourceChipsOnly() {
+    const selectedFilter = String(this.addonFilter || "all");
+    const availableFilters = this.getOrderedFilterNames();
+    let filterReset = false;
+    if (selectedFilter !== "all" && !availableFilters.includes(selectedFilter)) {
+      // An error chip can disappear after the user selected it. Do not leave
+      // the state pointing at a filter that no longer has a chip or rows.
+      this.addonFilter = "all";
+      this.listScrollTop = 0;
+      const allStreams = this.getFilteredStreams("all");
+      this.focusState = allStreams.length
+        ? { zone: "card", row: 0, action: "play" }
+        : { zone: "filter", index: 0 };
+      this.streamVirtualFocusReset = true;
+      this.streamVirtualPreferredIndex = allStreams.length ? 0 : null;
+      filterReset = true;
+    }
+    const track = this.container?.querySelector?.(".stream-route-chip-track");
+    if (!track) {
+      return false;
+    }
+    const markup = this.buildSourceChipMarkup();
+    const markupChanged = track.innerHTML !== markup;
+    if (markupChanged) {
+      track.innerHTML = markup;
+      this.renderedMarkup = null;
+      this._filteredStreamsCache = null;
+      this.streamFocusDomCache = null;
+      // New chip nodes need the same indexes assigned during a full render for
+      // generic focus helpers; StreamScreen's own focus state is then reapplied.
+      ScreenUtils.indexFocusables(this.container, ".focusable:not([hidden])");
+      if (this.focusState?.zone === "filter") {
+        this.applyFocus();
+      }
+    }
+    if (
+      filterReset ||
+      !this.renderedStreamListStable ||
+      this.renderedStreamListStreams !== this.streams
+    ) {
+      this.renderedMarkup = null;
+      return false;
+    }
+    const allStreams = this.getFilteredStreams("all");
+    const filtered = this.getFilteredStreams();
+    if (!this.applyAddonFilterDomState(filtered, allStreams)) {
+      this.renderedMarkup = null;
+      return false;
+    }
+    this.renderedStreamListSourceChips = this.sourceChips;
+    return true;
+  },
+
   renderChip(name, selected, status) {
     const chipStatus = String(status || "success");
     const classes = [
@@ -2168,18 +2922,24 @@ export const StreamScreen = {
         ? renderLoadingIndicator({ className: "stream-route-chip-spinner" })
         : "";
     return `
-      <button class="${classes}" data-action="setFilter" data-addon="${escapeHtml(name)}">
+      <button class="${classes}" data-action="setFilter" data-addon="${escapeHtml(name)}" aria-selected="${selected ? "true" : "false"}">
         ${spinner}
         <span>${escapeHtml(name === "all" ? t("common.all", {}, "All") : name)}</span>
       </button>
     `;
   },
 
-  renderStreamCard(stream, index, streamBadgesEnabled = true, badgeSettings = null) {
+  renderStreamCard(
+    stream,
+    index,
+    streamBadgesEnabled = true,
+    badgeSettings = null,
+    { streamKey = index, virtualized = false, virtualRowGap = null, virtualLast = false } = {}
+  ) {
     const headline = getStreamHeadline(stream);
     const quality = getStreamQuality(stream);
     const lazyBadges =
-      (Environment.isWebOS() || Environment.isTizen()) &&
+      isPerformanceConstrainedRuntime() &&
       hasStreamBadges(stream, streamBadgesEnabled, badgeSettings);
     const badges = lazyBadges
       ? `<div class="stream-route-card-badges stream-route-card-badges-lazy" data-lazy-stream-badges data-stream-badge-row="${index}" data-badges-hydrated="false" aria-label="${escapeHtml(t("settings_stream_badges_section", {}, "Fusion Style"))}"></div>`
@@ -2203,8 +2963,9 @@ export const StreamScreen = {
         }
       }
       const addonBadgeLabel = escapeHtml(getAddonBadgeLabel(stream.addonName || ""));
-      const addonLogoLoading = Environment.isWebOS() || Environment.isTizen() ? "eager" : "lazy";
-      const addonLogoDecoding = Environment.isWebOS() || Environment.isTizen() ? "sync" : "async";
+      const performanceConstrained = isPerformanceConstrainedRuntime();
+      const addonLogoLoading = performanceConstrained ? "eager" : "lazy";
+      const addonLogoDecoding = performanceConstrained ? "sync" : "async";
       const addonBadge = displayAddonLogoUrl
         ? `<img src="${escapeHtml(displayAddonLogoUrl)}" alt="${escapeHtml(stream.addonName || "Addon")}" data-addon-logo="${escapeHtml(addonLogoUrl)}" decoding="${addonLogoDecoding}" loading="${addonLogoLoading}" referrerpolicy="no-referrer" /><span hidden>${addonBadgeLabel}</span>`
         : `<span>${addonBadgeLabel}</span>`;
@@ -2215,8 +2976,12 @@ export const StreamScreen = {
           </div>`;
     }
 
+    const virtualRowStyle =
+      virtualized && Number.isFinite(Number(virtualRowGap))
+        ? ` style="margin-bottom:${virtualLast ? 0 : Math.max(0, Number(virtualRowGap))}px"`
+        : "";
     return `
-      <div class="stream-route-card-row" data-stream-row="${index}">
+      <div class="stream-route-card-row" data-stream-key="${escapeHtml(streamKey)}" data-stream-row="${index}"${virtualRowStyle}>
         <article class="stream-route-card stream-route-card-action focusable${this.isCardActionFocused(index, "play") ? " focused" : ""}"
                  data-action="playStream"
                  data-card-action="play"
@@ -2250,35 +3015,120 @@ export const StreamScreen = {
     `.repeat(count);
   },
 
+  renderStableStreamLoadingRow() {
+    return `
+      <div class="stream-route-card-row" data-stream-loading-row hidden style="display:none">
+        <div class="stream-route-card skeleton">
+          <div class="stream-route-card-copy">
+            <div class="stream-route-skeleton-line"></div>
+            <div class="stream-route-skeleton-line"></div>
+            <div class="stream-route-skeleton-line"></div>
+            <div class="stream-route-skeleton-line"></div>
+          </div>
+        </div>
+      </div>
+    `;
+  },
+
+  renderStableStreamEmptyState() {
+    return `<div class="stream-route-empty" data-stream-empty hidden style="display:none">${escapeHtml(t("sources_no_streams", {}, "No streams found"))}</div>`;
+  },
+
   render() {
     this.cancelScheduledRender();
+    const previousVirtualModel = this.streamVirtualized ? this.streamVirtualModel : null;
+    const previousFocusedIndex = Number(this.focusState?.row);
+    const previousFocusedKey =
+      previousVirtualModel &&
+      Number.isInteger(previousFocusedIndex) &&
+      previousFocusedIndex >= 0 &&
+      previousFocusedIndex < previousVirtualModel.keys.length
+        ? previousVirtualModel.keys[previousFocusedIndex]
+        : "";
+    if (
+      previousVirtualModel &&
+      !this.streamVirtualFocusReset &&
+      Number(this.listScrollTop || 0) > 0
+    ) {
+      const previousAnchorIndex = findStreamVirtualIndex(
+        previousVirtualModel.offsets,
+        Number(this.listScrollTop || 0)
+      );
+      this.streamVirtualPendingAnchor =
+        previousAnchorIndex >= 0
+          ? {
+              key: previousVirtualModel.keys[previousAnchorIndex],
+              offsetWithinRow:
+                Number(this.listScrollTop || 0) -
+                Number(previousVirtualModel.offsets[previousAnchorIndex] || 0)
+            }
+          : null;
+    } else {
+      this.streamVirtualPendingAnchor = null;
+    }
     // Rebuilt markup means the memoised filtered-stream list may be stale.
     this._filteredStreamsCache = null;
     const { isSeries, title, subtitle, episodeLabel, detailLine } = this.getHeaderMeta();
     const backdrop = this.getBackdropUrl();
     const logo = this.params?.logo || "";
     const shellStableClass = this.hasRenderedStreamRouteShell ? " stable" : "";
-    const orderedFilters = this.getOrderedFilterNames();
-    const chips = [
-      this.renderChip("all", this.addonFilter === "all", "success"),
-      ...orderedFilters.map((name) => {
-        const chip = this.sourceChips.find((entry) => entry.name === name) || {
-          name,
-          status: "success"
-        };
-        return this.renderChip(name, this.addonFilter === name, chip.status);
-      })
-    ].join("");
+    const chips = this.buildSourceChipMarkup();
     const filtered = this.getFilteredStreams();
+    const allStreams = this.getFilteredStreams("all");
     const hasPendingForFilter = this.hasPendingSourceLoads();
-    const hasAnyStreams = this.streams.length > 0;
+    // Keep the empty state global: a selected source can be empty while
+    // another compatible addon is still resolving and may provide streams.
+    const hasPendingForAllSources = this.hasPendingSourceLoads("all");
     const streamBadgesEnabled = DebridSettingsStore.get().streamBadgesEnabled !== false;
     const badgeSettings = StreamBadgeSettingsStore.snapshot();
     const showAddonLogo = badgeSettings.showAddonLogo === true;
     const addonLogosReady = !showAddonLogo || !filtered.length || this.areAddonLogosReady(filtered);
+    const virtualizedStreamList = Boolean(
+      this.shouldUseStreamVirtualization(allStreams) && filtered.length && addonLogosReady
+    );
+    if (virtualizedStreamList && previousFocusedKey && !this.streamVirtualFocusReset) {
+      const nextKeys = this.getStreamVirtualKeys(filtered);
+      const nextFocusedIndex = nextKeys.indexOf(previousFocusedKey);
+      if (nextFocusedIndex >= 0) {
+        this.focusState = {
+          ...this.focusState,
+          zone: "card",
+          row: nextFocusedIndex,
+          index: nextFocusedIndex
+        };
+      }
+    }
+    if (virtualizedStreamList) {
+      this.streamVirtualized = true;
+    } else if (this.streamVirtualized) {
+      this.stopStreamVirtualization();
+    }
+    const stableStreamList = Boolean(
+      isPerformanceConstrainedRuntime() &&
+      filtered.length &&
+      addonLogosReady &&
+      allStreams.length &&
+      !virtualizedStreamList &&
+      (!showAddonLogo || this.areAddonLogosReady(allStreams))
+    );
 
     let body = "";
-    if (filtered.length && addonLogosReady) {
+    if (virtualizedStreamList) {
+      body = this.renderStreamVirtualMarkup(filtered, streamBadgesEnabled, badgeSettings);
+      if (hasPendingForFilter) {
+        body += this.renderLoadingCards(1);
+      }
+    } else if (stableStreamList) {
+      body = allStreams
+        .map((stream, index) =>
+          this.renderStreamCard(stream, index, streamBadgesEnabled, badgeSettings)
+        )
+        .join("");
+      if (hasPendingForFilter) {
+        body += this.renderStableStreamLoadingRow();
+      }
+      body += this.renderStableStreamEmptyState();
+    } else if (filtered.length && addonLogosReady) {
       body = filtered
         .map((stream, index) =>
           this.renderStreamCard(stream, index, streamBadgesEnabled, badgeSettings)
@@ -2290,12 +3140,12 @@ export const StreamScreen = {
     } else if (filtered.length && showAddonLogo) {
       this.requestAddonLogoPrerender(filtered);
       body = this.renderLoadingCards(Math.min(3, filtered.length));
-    } else if ((this.loading && !hasAnyStreams) || hasPendingForFilter) {
+    } else if (hasPendingForFilter || hasPendingForAllSources) {
       body = this.renderLoadingCards();
     } else if (this.error) {
       body = `<div class="stream-route-empty">${escapeHtml(this.error)}</div>`;
     } else if (!filtered.length) {
-      body = `<div class="stream-route-empty">No sources found for this filter.</div>`;
+      body = `<div class="stream-route-empty">${escapeHtml(t("sources_no_streams", {}, "No streams found"))}</div>`;
     }
 
     const routeContent = this.autoResumeUiActive
@@ -2351,13 +3201,25 @@ export const StreamScreen = {
       this.focusedElement = null;
     }
 
+    this.renderedStreamListStable = stableStreamList;
+    this.renderedStreamListStreams = this.streams;
+    this.renderedStreamListSourceChips = this.sourceChips;
+    if (stableStreamList) {
+      this.applyAddonFilterDomState(filtered, allStreams);
+    }
+
     this.restoreScrollPosition();
     this.hydrateVisibleStreamBadges();
     this.bindAddonLogoFallbacks();
-    ScreenUtils.indexFocusables(this.container);
+    ScreenUtils.indexFocusables(this.container, ".focusable:not([hidden])");
     this.restoreScrollPosition();
     this.applyFocus();
     this.bindListScrollState();
+    if (virtualizedStreamList) {
+      this.requestStreamVirtualMeasure();
+      this.requestStreamVirtualSync();
+    }
+    this.streamVirtualFocusReset = false;
     this.hasRenderedStreamRouteShell = true;
   },
 
@@ -2377,6 +3239,7 @@ export const StreamScreen = {
       "scroll",
       () => {
         this.listScrollTop = this.getListScrollTop(list);
+        this.requestStreamVirtualSync();
         this.requestStreamBadgeHydration();
       },
       { passive: true }
@@ -2393,6 +3256,7 @@ export const StreamScreen = {
           }
           event?.preventDefault?.();
           this.setListScrollTop(list, this.getListScrollTop(list) + deltaY);
+          this.requestStreamVirtualSync();
           this.requestStreamBadgeHydration();
         },
         { passive: false }
@@ -2402,7 +3266,7 @@ export const StreamScreen = {
 
   requestStreamBadgeHydration() {
     if (
-      (!Environment.isWebOS() && !Environment.isTizen()) ||
+      !isPerformanceConstrainedRuntime() ||
       Router.getCurrent() !== "stream" ||
       this.streamBadgeHydrationFrame
     ) {
@@ -2415,15 +3279,16 @@ export const StreamScreen = {
   },
 
   hydrateVisibleStreamBadges() {
-    if (
-      (!Environment.isWebOS() && !Environment.isTizen()) ||
-      Router.getCurrent() !== "stream" ||
-      !this.container
-    ) {
+    if (!isPerformanceConstrainedRuntime() || Router.getCurrent() !== "stream" || !this.container) {
       return;
     }
     const list = this.container.querySelector(".stream-route-list");
-    const placeholders = Array.from(this.container.querySelectorAll("[data-lazy-stream-badges]"));
+    const placeholders = Array.from(
+      this.container.querySelectorAll("[data-lazy-stream-badges]")
+    ).filter((placeholder) => {
+      const row = placeholder.closest(".stream-route-card-row");
+      return !row || !row.hidden;
+    });
     if (!list || !placeholders.length) {
       return;
     }
@@ -2431,16 +3296,17 @@ export const StreamScreen = {
     const streamBadgesEnabled = DebridSettingsStore.get().streamBadgesEnabled !== false;
     const badgeSettings = StreamBadgeSettingsStore.snapshot();
     const focusedRow = this.focusState?.zone === "card" ? Number(this.focusState?.row || 0) : -1;
+    let changed = false;
 
-    // Android's LazyColumn only composes badge images near the viewport. Keep
-    // the complete Web card list for existing remote/pointer navigation, but
-    // apply the same bounded image/DOM lifetime on webOS and Tizen. Window by
+    // Android's LazyColumn only composes badge images near the viewport. The
+    // long-list path now also bounds the card DOM; short lists retain the
+    // existing complete markup for pointer and remote navigation. Window by
     // row index around the focus (the focused row is always scrolled into view)
     // instead of measuring every card: per-card geometry reads forced a full
     // list reflow on every focus move on constrained TV browsers.
     const anchorRow = focusedRow >= 0 ? focusedRow : 0;
-    const windowStart = anchorRow - TV_STREAM_BADGE_WINDOW_ROWS;
-    const windowEnd = anchorRow + TV_STREAM_BADGE_WINDOW_ROWS;
+    const windowStart = anchorRow - STREAM_BADGE_WINDOW_ROWS;
+    const windowEnd = anchorRow + STREAM_BADGE_WINDOW_ROWS;
     placeholders.forEach((placeholder) => {
       const rowIndex = Number(placeholder.dataset.streamBadgeRow || -1);
       const shouldHydrate =
@@ -2460,13 +3326,18 @@ export const StreamScreen = {
           placeholder.classList.remove("stream-route-card-badges-lazy");
         }
         placeholder.dataset.badgesHydrated = "true";
+        changed = true;
         // Keep already-visited Tizen rows hydrated. Removing a wrapped badge row
         // above the viewport could change list geometry and move the focused card.
       } else if (!shouldHydrate && hydrated && !Environment.isTizen()) {
         placeholder.textContent = "";
         placeholder.dataset.badgesHydrated = "false";
+        changed = true;
       }
     });
+    if (changed) {
+      this.requestStreamVirtualMeasure();
+    }
   },
 
   bindAddonLogoFallbacks() {
@@ -2656,11 +3527,33 @@ export const StreamScreen = {
     }
 
     const direction = getDpadDirection(event);
+    if (direction && event?.repeat) {
+      const now = Date.now();
+      const lastRepeatAt = Number(this.streamLastNavigationRepeatAt || 0);
+      if (now - lastRepeatAt < STREAM_DPAD_REPEAT_THROTTLE_MS) {
+        event?.preventDefault?.();
+        return;
+      }
+      this.streamLastNavigationRepeatAt = now;
+    }
     if (direction) {
-      const { chips, rows } = this.getFocusLists();
-      const zone = this.focusState?.zone || (rows.length ? "card" : "filter");
+      let { chips, rows, rowCount, virtualized } = this.getFocusLists();
+      const zone = this.focusState?.zone || (rowCount ? "card" : "filter");
       let index = Number(this.focusState?.index || 0);
       event?.preventDefault?.();
+
+      if (zone === "card" && virtualized) {
+        const focusedRowIndex = clamp(
+          Number(this.focusState?.row || 0),
+          0,
+          Math.max(0, rowCount - 1)
+        );
+        if (!rows[focusedRowIndex]) {
+          this.ensureStreamVirtualRowMounted(focusedRowIndex);
+          this.streamFocusDomCache = null;
+          ({ chips, rows, rowCount, virtualized } = this.getFocusLists());
+        }
+      }
 
       if (zone === "filter") {
         if (direction === "left") {
@@ -2691,7 +3584,7 @@ export const StreamScreen = {
           }
           return;
         }
-        if (direction === "down" && rows.length) {
+        if (direction === "down" && rowCount) {
           this.focusState = { zone: "card", row: 0, action: "play" };
           this.applyFocus();
         }
@@ -2699,7 +3592,7 @@ export const StreamScreen = {
       }
 
       if (zone === "card") {
-        const rowIndex = clamp(Number(this.focusState?.row || 0), 0, Math.max(0, rows.length - 1));
+        const rowIndex = clamp(Number(this.focusState?.row || 0), 0, Math.max(0, rowCount - 1));
         const currentRow = rows[rowIndex] || null;
         const currentAction = String(this.focusState?.action || "play");
         if (direction === "up") {
@@ -2709,7 +3602,7 @@ export const StreamScreen = {
             this.focusState = {
               zone: "card",
               row: rowIndex - 1,
-              action: String(target?.dataset?.cardAction || "play")
+              action: String(target?.dataset?.cardAction || currentAction)
             };
             this.applyFocus();
             return;
@@ -2726,13 +3619,13 @@ export const StreamScreen = {
           return;
         }
         if (direction === "down") {
-          const nextRowIndex = clamp(rowIndex + 1, 0, Math.max(0, rows.length - 1));
+          const nextRowIndex = clamp(rowIndex + 1, 0, Math.max(0, rowCount - 1));
           const nextRow = rows[nextRowIndex] || null;
           const target = this.resolveCardActionForRow(nextRow, currentAction);
           this.focusState = {
             zone: "card",
             row: nextRowIndex,
-            action: String(target?.dataset?.cardAction || "play")
+            action: String(target?.dataset?.cardAction || currentAction)
           };
           this.applyFocus();
           return;
@@ -2769,7 +3662,11 @@ export const StreamScreen = {
       return;
     }
 
-    const current = this.container.querySelector(".focusable.focused");
+    let current = this.container.querySelector(".focusable.focused");
+    if (!current && this.streamVirtualized && this.focusState?.zone === "card") {
+      this.applyFocus();
+      current = this.container.querySelector(".focusable.focused");
+    }
     if (!current) {
       return;
     }
@@ -2799,6 +3696,7 @@ export const StreamScreen = {
     this.playResolveToken = Number(this.playResolveToken || 0) + 1;
     this.nativePlayerRequestToken = Number(this.nativePlayerRequestToken || 0) + 1;
     this.cancelScheduledRender();
+    this.stopStreamVirtualization();
     if (this.errorChipTimer) {
       clearTimeout(this.errorChipTimer);
       this.errorChipTimer = null;
@@ -2812,9 +3710,13 @@ export const StreamScreen = {
       this.releaseImageProxyReadyListener = null;
     }
     this.renderedMarkup = null;
+    this.renderedStreamListStable = false;
+    this.renderedStreamListStreams = null;
+    this.renderedStreamListSourceChips = null;
     this.boundStreamListNode = null;
     this.streamFocusDomCache = null;
     this.focusedElement = null;
+    this.streamLastNavigationRepeatAt = 0;
     ScreenUtils.hide(this.container);
   }
 };

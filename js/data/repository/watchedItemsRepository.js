@@ -4,6 +4,7 @@ import { TraktSettingsStore, WatchProgressSource } from "../local/traktSettingsS
 import { SimklAuthStore } from "../local/simklAuthStore.js";
 import { SimklSyncService } from "./simklSyncService.js";
 import { TraktAuthService, requestJson as traktRequestJson } from "./traktAuthService.js";
+import { getSyncBackoffRemainingMs } from "../../core/sync/syncBackoffPolicy.js";
 
 function activeProfileId() {
   return String(ProfileManager.getActiveProfileId() || "1");
@@ -79,32 +80,100 @@ function watchedKey(item = {}) {
   return `${String(item.contentId || "").toLowerCase()}:${item.season ?? ""}:${item.episode ?? ""}`;
 }
 
-let watchedItemsSyncTimer = null;
-let watchedItemsSyncInFlight = null;
+function watchedEpisodeRank(item = {}) {
+  return Number(item.season || 0) * 100000 + Number(item.episode || 0);
+}
 
-function queueWatchedItemsCloudSync(delayMs = 250) {
-  if (watchedItemsSyncTimer) {
-    clearTimeout(watchedItemsSyncTimer);
+function byWatchedAtDescending(left, right) {
+  return Number(right?.watchedAt || 0) - Number(left?.watchedAt || 0);
+}
+
+/**
+ * Trims a watched list to `limit` without dropping any title from it.
+ *
+ * The list is one entry per watched episode, in whatever order the tracker returned its library.
+ * A handful of long-running series can therefore spend the whole budget before the rest is even
+ * reached: a 1284-entry Simkl account projects to ~9000 episodes, and a plain slice at 2000 kept
+ * only 81 of its 539 series - chosen by Simkl's ordering, not by anything the viewer did. Next Up
+ * seeds from this list, so those series simply vanish from Continue Watching.
+ *
+ * Keeping the furthest-watched episode of every title first means each one stays represented, which
+ * is all Next Up needs from it. The remaining budget then goes to the most recent episodes, which is
+ * what the watched badges read.
+ */
+function limitWatchedItems(items, limit) {
+  const all = Array.isArray(items) ? items : [];
+  const max = Math.max(0, Number(limit || 0));
+  if (max === 0) {
+    return [];
   }
-  watchedItemsSyncTimer = setTimeout(() => {
-    watchedItemsSyncTimer = null;
+  if (!Number.isFinite(max) || all.length <= max) {
+    return all;
+  }
+
+  const furthestByContent = new Map();
+  all.forEach((item) => {
+    const contentId = String(item?.contentId || "")
+      .trim()
+      .toLowerCase();
+    if (!contentId) return;
+    const existing = furthestByContent.get(contentId);
+    const itemRank = watchedEpisodeRank(item);
+    const existingRank = watchedEpisodeRank(existing);
+    if (
+      !existing ||
+      itemRank > existingRank ||
+      (itemRank === existingRank && Number(item?.watchedAt || 0) > Number(existing?.watchedAt || 0))
+    ) {
+      furthestByContent.set(contentId, item);
+    }
+  });
+
+  const furthest = Array.from(furthestByContent.values()).sort(byWatchedAtDescending);
+  const kept = new Set(furthest);
+  const rest = all.filter((item) => !kept.has(item)).sort(byWatchedAtDescending);
+  return [...furthest, ...rest].slice(0, max);
+}
+
+const watchedItemsSyncTimers = new Map();
+const watchedItemsSyncInFlightByProfile = new Map();
+
+function queueWatchedItemsCloudSync(profileId = activeProfileId(), delayMs = 250) {
+  const profileKey = String(profileId || "1");
+  const existingTimer = watchedItemsSyncTimers.get(profileKey);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timerId = setTimeout(() => {
+    watchedItemsSyncTimers.delete(profileKey);
     const runPush = async () => {
-      if (watchedItemsSyncInFlight) {
-        await watchedItemsSyncInFlight.catch(() => false);
+      const inFlight = watchedItemsSyncInFlightByProfile.get(profileKey);
+      if (inFlight) {
+        await inFlight.catch(() => false);
       }
-      watchedItemsSyncInFlight = import("../../core/profile/watchedItemsSyncService.js")
-        .then(({ WatchedItemsSyncService }) => WatchedItemsSyncService.push())
+      const pushPromise = import("../../core/profile/watchedItemsSyncService.js")
+        .then(({ WatchedItemsSyncService }) => WatchedItemsSyncService.push(profileId))
         .catch((error) => {
           console.warn("Watched items cloud sync enqueue failed", error);
           return false;
         })
         .finally(() => {
-          watchedItemsSyncInFlight = null;
+          if (watchedItemsSyncInFlightByProfile.get(profileKey) === pushPromise) {
+            watchedItemsSyncInFlightByProfile.delete(profileKey);
+          }
         });
-      await watchedItemsSyncInFlight;
+      watchedItemsSyncInFlightByProfile.set(profileKey, pushPromise);
+      const didPush = await pushPromise;
+      if (!didPush) {
+        const retryDelayMs = getSyncBackoffRemainingMs();
+        if (retryDelayMs > 0) {
+          queueWatchedItemsCloudSync(profileId, Math.max(5000, retryDelayMs));
+        }
+      }
     };
     void runPush();
   }, delayMs);
+  watchedItemsSyncTimers.set(profileKey, timerId);
 }
 
 function matchesWatchedTarget(item = {}, contentId, options = null) {
@@ -126,14 +195,14 @@ function matchesWatchedTarget(item = {}, contentId, options = null) {
   return item.season === targetSeason && item.episode === targetEpisode;
 }
 
-async function deleteWatchedItemsFromCloud(items = []) {
+async function deleteWatchedItemsFromCloud(items = [], profileId = activeProfileId()) {
   if (!items.length) {
     return false;
   }
   try {
     const { WatchedItemsSyncService } =
       await import("../../core/profile/watchedItemsSyncService.js");
-    return WatchedItemsSyncService.deleteItems(items);
+    return WatchedItemsSyncService.deleteItems(items, profileId);
   } catch (error) {
     console.warn("Watched items cloud delete failed", error);
     return false;
@@ -141,13 +210,13 @@ async function deleteWatchedItemsFromCloud(items = []) {
 }
 
 class WatchedItemsRepository {
-  async getAll(limit = 2000) {
-    const local = WatchedItemsStore.listForProfile(activeProfileId());
+  async getAll(limit = 2000, profileId = activeProfileId()) {
+    const local = WatchedItemsStore.listForProfile(profileId);
     if (!shouldUseSimkl()) return local.slice(0, limit);
     const remote = await SimklSyncService.getWatchedItems().catch(() => []);
     const remoteKeys = new Set(remote.map(watchedKey));
-    return [...remote, ...local.filter((item) => !remoteKeys.has(watchedKey(item)))].slice(
-      0,
+    return limitWatchedItems(
+      [...remote, ...local.filter((item) => !remoteKeys.has(watchedKey(item)))],
       limit
     );
   }
@@ -233,12 +302,12 @@ class WatchedItemsRepository {
       }
     }
     WatchedItemsStore.remove(contentId, pid, options);
-    await deleteWatchedItemsFromCloud(removedItems);
+    await deleteWatchedItemsFromCloud(removedItems, pid);
     queueWatchedItemsCloudSync();
   }
 
-  async replaceAll(items) {
-    WatchedItemsStore.replaceForProfile(activeProfileId(), items || []);
+  async replaceAll(items, profileId = activeProfileId()) {
+    WatchedItemsStore.replaceForProfile(profileId, items || []);
   }
 }
 

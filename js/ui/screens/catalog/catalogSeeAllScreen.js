@@ -5,6 +5,8 @@ import { watchedItemsRepository } from "../../../data/repository/watchedItemsRep
 import { Environment } from "../../../platform/environment.js";
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
 import { I18n } from "../../../i18n/index.js";
+import { filterReleasedItems } from "../../../core/util/releaseInfoUtils.js";
+import { mergeCatalogPage } from "../../../core/util/catalogPagination.js";
 import { focusWithoutAutoScroll } from "../../components/sidebarNavigation.js";
 import {
   posterItemFromNode,
@@ -135,7 +137,13 @@ export const CatalogSeeAllScreen = {
     if (!addonBaseUrl || !catalogId) {
       return null;
     }
-    return `catalogSeeAll:${addonBaseUrl}:${catalogId}:${type}`;
+    const normalizedArgs = Object.entries(
+      params?.extraArgs && typeof params.extraArgs === "object" ? params.extraArgs : {}
+    )
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+      .join("&");
+    return `catalogSeeAll:${addonBaseUrl}:${catalogId}:${type}${normalizedArgs ? `:${normalizedArgs}` : ""}`;
   },
 
   captureRouteState() {
@@ -161,9 +169,12 @@ export const CatalogSeeAllScreen = {
       return false;
     }
     this.params = params || {};
-    this.items = Array.isArray(snapshot.items) ? [...snapshot.items] : [];
+    const snapshotItems = Array.isArray(snapshot.items) ? snapshot.items : [];
+    this.items = this.layoutPrefs?.hideUnreleasedContent
+      ? filterReleasedItems(snapshotItems)
+      : [...snapshotItems];
     this.nextSkip = Number(snapshot.nextSkip || 0);
-    this.hasMore = Boolean(snapshot.hasMore);
+    this.hasMore = params?.supportsSkip !== false && Boolean(snapshot.hasMore);
     this.lastFocusedKey = snapshot.lastFocusedKey ? String(snapshot.lastFocusedKey) : null;
     this.savedScrollTop = Number(snapshot.savedScrollTop || 0);
     this.pendingRestoreFocus = true;
@@ -180,11 +191,26 @@ export const CatalogSeeAllScreen = {
     this.container = document.getElementById("catalogSeeAll");
     ScreenUtils.show(this.container);
     this.params = params || {};
-    this.items = Array.isArray(params?.initialItems) ? [...params.initialItems] : [];
-    this.nextSkip = this.items.length ? 100 : 0;
     this.layoutPrefs = LayoutPreferences.get();
+    const initialItems = Array.isArray(params?.initialItems) ? params.initialItems : [];
+    const supportsSkip = params?.supportsSkip !== false;
+    const rawSkipStep = Number(params?.skipStep);
+    const skipStep =
+      Number.isFinite(rawSkipStep) && rawSkipStep > 0 ? Math.trunc(rawSkipStep) : 100;
+    const hasExplicitInitialHasMore = typeof params?.initialHasMore === "boolean";
+    const initialHasMore = hasExplicitInitialHasMore ? params.initialHasMore : true;
+    this.items = this.layoutPrefs?.hideUnreleasedContent
+      ? filterReleasedItems(initialItems)
+      : [...initialItems];
+    const initialNextSkip = Number(params?.initialNextSkip);
+    this.nextSkip =
+      supportsSkip && initialHasMore && Number.isFinite(initialNextSkip) && initialNextSkip > 0
+        ? Math.trunc(initialNextSkip)
+        : supportsSkip && initialHasMore && this.items.length
+          ? skipStep
+          : 0;
     this.loading = false;
-    this.hasMore = true;
+    this.hasMore = supportsSkip && initialHasMore;
     this.lastFocusedKey = this.items[0]?.id ? `item:${this.items[0].id}` : null;
     this.pendingRestoreFocus = false;
     this.preserveViewportOnNextRender = false;
@@ -238,7 +264,12 @@ export const CatalogSeeAllScreen = {
       catalogName: descriptor.catalogName,
       type: descriptor.type,
       skip,
-      supportsSkip: true
+      skipStep: descriptor.skipStep,
+      extraArgs:
+        descriptor.extraArgs && typeof descriptor.extraArgs === "object"
+          ? descriptor.extraArgs
+          : {},
+      supportsSkip: descriptor.supportsSkip !== false
     });
     if (token !== this.loadToken) {
       return;
@@ -250,21 +281,22 @@ export const CatalogSeeAllScreen = {
       this.render();
       return;
     }
-    const incoming = Array.isArray(result?.data?.items) ? result.data.items : [];
-    let addedCount = 0;
-    if (incoming.length) {
-      const seen = new Set(this.items.map((item) => item.id));
-      incoming.forEach((item) => {
-        if (!item?.id || seen.has(item.id)) {
-          return;
-        }
-        seen.add(item.id);
-        this.items.push(item);
-        addedCount += 1;
-      });
-      this.nextSkip = skip + 100;
-    }
-    this.hasMore = incoming.length > 0;
+    const rawIncoming = Array.isArray(result?.data?.items) ? result.data.items : [];
+    const incoming = this.layoutPrefs?.hideUnreleasedContent
+      ? filterReleasedItems(rawIncoming)
+      : rawIncoming;
+    const merged = mergeCatalogPage(
+      this.items,
+      incoming,
+      skip,
+      rawIncoming.length,
+      result?.data?.nextSkip,
+      result?.data?.hasMore
+    );
+    const addedCount = merged.addedCount;
+    this.items = merged.items;
+    this.nextSkip = merged.nextSkip;
+    this.hasMore = merged.hasMore;
     this.loading = false;
     this.pendingRestoreFocus = true;
     this.preserveViewportOnNextRender = Boolean(preserveViewport && addedCount > 0);

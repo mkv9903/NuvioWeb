@@ -27,15 +27,22 @@ import {
 import { ProfileManager } from "./profileManager.js";
 import {
   clearProfileSettingsCloudSyncPending,
+  getProfileSettingsCloudSyncPendingVersion,
   hasProfileSettingsCloudSyncPending
 } from "../../data/local/profileScopedStore.js";
+import { isSyncBackoffActive } from "../sync/syncBackoffPolicy.js";
 import { normalizeSubtitleVerticalOffset } from "../player/subtitleVerticalOffset.js";
+import {
+  androidColorIntToSubtitleTextOpacity,
+  normalizeSubtitleTextOpacity
+} from "../player/subtitleTextOpacity.js";
 import { isFastHorizontalNavigationEnabled } from "../../platform/sharedKeys.js";
 
 const PULL_RPC = "sync_pull_profile_settings_blob";
 const PUSH_RPC = "sync_push_profile_settings_blob";
 const SETTINGS_SYNC_PLATFORM = "tv";
 const CACHE_KEY = "profileSettingsSyncCache";
+const syncInFlightByProfile = new Map();
 const EXCLUDED_PROFILE_KEYS = {
   layout_settings: new Set(["search_discover_enabled"]),
   player_settings: new Set(["audio_amplification_db", "persist_audio_amplification"]),
@@ -67,6 +74,25 @@ function resolveProfileId(profileId = null) {
     return Math.trunc(raw);
   }
   return 1;
+}
+
+async function withProfileSettingsSyncLock(profileId, task) {
+  const key = String(resolveProfileId(profileId));
+  const previous = syncInFlightByProfile.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  syncInFlightByProfile.set(key, current);
+  await previous.catch(() => false);
+  try {
+    return await task();
+  } finally {
+    release();
+    if (syncInFlightByProfile.get(key) === current) {
+      syncInFlightByProfile.delete(key);
+    }
+  }
 }
 
 function cloneValue(value) {
@@ -578,7 +604,7 @@ function normalizeTmdbLanguageForWeb(value) {
   }
 }
 
-function hexToAndroidColorInt(value, fallback = "#ffffff") {
+function hexToAndroidColorInt(value, fallback = "#ffffff", alphaPercent = 100) {
   const match = String(value || fallback)
     .trim()
     .match(/^#([0-9a-f]{6})$/i);
@@ -586,7 +612,8 @@ function hexToAndroidColorInt(value, fallback = "#ffffff") {
   const red = parseInt(hex.slice(0, 2), 16);
   const green = parseInt(hex.slice(2, 4), 16);
   const blue = parseInt(hex.slice(4, 6), 16);
-  return (0xff << 24) | (red << 16) | (green << 8) | blue;
+  const alpha = Math.round((normalizeSubtitleTextOpacity(alphaPercent) / 100) * 0xff);
+  return (alpha << 24) | (red << 16) | (green << 8) | blue;
 }
 
 function androidColorIntToHex(value, fallback = "#ffffff") {
@@ -746,6 +773,9 @@ const FEATURE_ADAPTERS = {
         continue_watching_sort_mode: normalizeContinueWatchingSortModeForAndroid(
           layout.continueWatchingSortMode
         ),
+        home_imdb_ratings_visibility: String(
+          layout.homeImdbRatingsVisibility || "SHOW_ALL"
+        ).toUpperCase(),
         fast_horizontal_navigation_enabled: isFastHorizontalNavigationEnabled()
       };
     },
@@ -845,6 +875,11 @@ const FEATURE_ADAPTERS = {
         projected.fast_horizontal_navigation_enabled = Boolean(
           raw.fast_horizontal_navigation_enabled
         );
+      }
+      if (stringOrNull(raw.home_imdb_ratings_visibility)) {
+        projected.home_imdb_ratings_visibility = String(raw.home_imdb_ratings_visibility)
+          .trim()
+          .toUpperCase();
       }
       return projected;
     },
@@ -980,6 +1015,11 @@ const FEATURE_ADAPTERS = {
           raw.continue_watching_sort_mode
         );
       }
+      if (stringOrNull(raw.home_imdb_ratings_visibility)) {
+        partial.homeImdbRatingsVisibility = String(raw.home_imdb_ratings_visibility)
+          .trim()
+          .toUpperCase();
+      }
       if (!Object.keys(partial).length) {
         return false;
       }
@@ -1042,7 +1082,11 @@ const FEATURE_ADAPTERS = {
           settings.subtitleStyle?.verticalOffset
         ),
         subtitle_bold: Boolean(settings.subtitleStyle?.bold),
-        subtitle_text_color: hexToAndroidColorInt(settings.subtitleStyle?.textColor, "#ffffff"),
+        subtitle_text_color: hexToAndroidColorInt(
+          settings.subtitleStyle?.textColor,
+          "#ffffff",
+          settings.subtitleStyle?.textOpacity
+        ),
         subtitle_background_color: cssColorToAndroidColorInt(
           settings.subtitleStyle?.backgroundColor
         ),
@@ -1305,6 +1349,7 @@ const FEATURE_ADAPTERS = {
       }
       if (numberOrNull(raw.subtitle_text_color) != null) {
         subtitleStyle.textColor = androidColorIntToHex(raw.subtitle_text_color, "#ffffff");
+        subtitleStyle.textOpacity = androidColorIntToSubtitleTextOpacity(raw.subtitle_text_color);
       }
       if (numberOrNull(raw.subtitle_background_color) != null) {
         subtitleStyle.backgroundColor = androidColorIntToCss(raw.subtitle_background_color);
@@ -2087,66 +2132,87 @@ function applyRemoteBlob(profileId, blob) {
   return applied;
 }
 
-export const ProfileSettingsSyncService = {
-  async pull(profileId = null) {
-    try {
-      if (!AuthManager.isAuthenticated) {
-        return false;
-      }
-      const resolvedProfileId = resolveProfileId(profileId);
-      if (hasProfileSettingsCloudSyncPending(resolvedProfileId)) {
-        await this.push(resolvedProfileId);
-        return false;
-      }
-      const blob = await pullRemoteBlob(resolvedProfileId);
-      if (!blob) {
-        return false;
-      }
-
-      setCachedBlob(resolvedProfileId, blob);
-
-      const remoteSignature = buildComparableSignatureFromBlob(blob);
-      const localSignature = buildComparableSignatureFromLocal(resolvedProfileId);
-      if (remoteSignature === localSignature) {
-        return false;
-      }
-
-      return applyRemoteBlob(String(resolvedProfileId), blob);
-    } catch (error) {
-      if (shouldTreatAsMissingResource(error)) {
-        return false;
-      }
-      console.warn("Profile settings sync pull failed", error);
+async function pullProfileSettingsUnlocked(resolvedProfileId) {
+  try {
+    if (!AuthManager.isAuthenticated || isSyncBackoffActive()) {
       return false;
     }
+    if (hasProfileSettingsCloudSyncPending(resolvedProfileId)) {
+      // Android keeps a local change authoritative until its debounced push
+      // succeeds. Never pull remote data over an unsynced local edit.
+      return false;
+    }
+    const blob = await pullRemoteBlob(resolvedProfileId);
+    if (
+      !blob ||
+      !AuthManager.isAuthenticated ||
+      isSyncBackoffActive() ||
+      hasProfileSettingsCloudSyncPending(resolvedProfileId)
+    ) {
+      return false;
+    }
+
+    setCachedBlob(resolvedProfileId, blob);
+
+    const remoteSignature = buildComparableSignatureFromBlob(blob);
+    const localSignature = buildComparableSignatureFromLocal(resolvedProfileId);
+    if (remoteSignature === localSignature) {
+      return false;
+    }
+
+    return applyRemoteBlob(String(resolvedProfileId), blob);
+  } catch (error) {
+    if (shouldTreatAsMissingResource(error)) {
+      return false;
+    }
+    console.warn("Profile settings sync pull failed", error);
+    return false;
+  }
+}
+
+async function pushProfileSettingsUnlocked(resolvedProfileId) {
+  try {
+    if (!AuthManager.isAuthenticated || isSyncBackoffActive()) {
+      return false;
+    }
+    const pendingVersion = getProfileSettingsCloudSyncPendingVersion(resolvedProfileId);
+    const remoteBlob = await pullRemoteBlob(resolvedProfileId);
+    const blob = buildOutgoingBlob(String(resolvedProfileId), remoteBlob);
+    await SupabaseApi.rpc(
+      PUSH_RPC,
+      {
+        p_profile_id: resolvedProfileId,
+        p_settings_json: blob,
+        p_platform: SETTINGS_SYNC_PLATFORM
+      },
+      true
+    );
+    setCachedBlob(resolvedProfileId, blob);
+    if (pendingVersion != null) {
+      clearProfileSettingsCloudSyncPending(resolvedProfileId, pendingVersion);
+    }
+    return true;
+  } catch (error) {
+    if (shouldTreatAsMissingResource(error)) {
+      return false;
+    }
+    console.warn("Profile settings sync push failed", error);
+    return false;
+  }
+}
+
+export const ProfileSettingsSyncService = {
+  async pull(profileId = null) {
+    const resolvedProfileId = resolveProfileId(profileId);
+    return withProfileSettingsSyncLock(resolvedProfileId, () =>
+      pullProfileSettingsUnlocked(resolvedProfileId)
+    );
   },
 
   async push(profileId = null) {
-    try {
-      if (!AuthManager.isAuthenticated) {
-        return false;
-      }
-      const resolvedProfileId = resolveProfileId(profileId);
-      const remoteBlob = await pullRemoteBlob(resolvedProfileId);
-      const blob = buildOutgoingBlob(String(resolvedProfileId), remoteBlob);
-      await SupabaseApi.rpc(
-        PUSH_RPC,
-        {
-          p_profile_id: resolvedProfileId,
-          p_settings_json: blob,
-          p_platform: SETTINGS_SYNC_PLATFORM
-        },
-        true
-      );
-      setCachedBlob(resolvedProfileId, blob);
-      clearProfileSettingsCloudSyncPending(resolvedProfileId);
-      return true;
-    } catch (error) {
-      if (shouldTreatAsMissingResource(error)) {
-        return false;
-      }
-      console.warn("Profile settings sync push failed", error);
-      return false;
-    }
+    const resolvedProfileId = resolveProfileId(profileId);
+    return withProfileSettingsSyncLock(resolvedProfileId, () =>
+      pushProfileSettingsUnlocked(resolvedProfileId)
+    );
   }
 };

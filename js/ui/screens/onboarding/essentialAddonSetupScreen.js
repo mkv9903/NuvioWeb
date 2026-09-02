@@ -4,6 +4,7 @@ import { ProfileSettingsSyncService } from "../../../core/profile/profileSetting
 import { I18n } from "../../../i18n/index.js";
 import { Router } from "../../navigation/router.js";
 import { ScreenUtils } from "../../navigation/screen.js";
+import { renderBrandWordmarkImage } from "../../components/brandWordmark.js";
 
 function t(key, fallback) {
   return I18n.t(key, {}, { fallback });
@@ -23,7 +24,7 @@ export const EssentialAddonSetupScreen = {
     ScreenUtils.show(this.container);
     this.container.innerHTML = `
       <main class="experience-mode-screen essential-addon-setup">
-        <img class="experience-mode-logo" src="assets/brand/app_logo_wordmark.png" alt="Nuvio" />
+        ${renderBrandWordmarkImage({ className: "experience-mode-logo" })}
         <h1>${escapeHtml(t("essential_addon_setup_title", "Set up your add-ons"))}</h1>
         <p>${escapeHtml(t("essential_addon_setup_subtitle", "Add a manifest URL manually now, or skip and configure add-ons later from Settings."))}</p>
         <div class="experience-mode-options">

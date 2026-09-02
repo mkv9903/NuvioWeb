@@ -453,6 +453,11 @@ export const PluginScreen = {
     }
 
     if (code === 13) {
+      // Consume the navigation key before mounting the destination screen.
+      // webOS can otherwise deliver its native activation after the new
+      // screen has focused its first action button.
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
       await this.activateFocused();
     }
   },

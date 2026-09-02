@@ -1,4 +1,6 @@
 import { Platform } from "../index.js";
+import { TizenCapabilities } from "./tizenCapabilities.js";
+import { getTizenServiceIdCandidates } from "./tizenServiceIds.js";
 
 const LOCAL_BASE_URLS = [
   "http://127.0.0.1:2710",
@@ -9,6 +11,8 @@ const LOCAL_BASE_URLS = [
 
 const START_TIMEOUT_MS = 12000;
 const PROBE_TIMEOUT_MS = 2500;
+const SERVICE_START_CALL_TIMEOUT_MS = 4000;
+const TIZEN_DEFAULT_OPERATION = "http://tizen.org/appcontrol/operation/default";
 
 let startPromise = null;
 
@@ -30,24 +34,10 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
-function getServiceId() {
-  const configured = String(globalThis.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ || "").trim();
-  if (configured) {
-    return configured;
-  }
-  try {
-    const appInfo = globalThis.tizen?.application?.getCurrentApplication?.()?.appInfo;
-    const packageId = String(appInfo?.packageId || "").trim();
-
-    if (packageId) {
-      return `${packageId}.EngineFsService`;
-    }
-
-    const appId = String(appInfo?.id || "").trim();
-    return appId ? `${appId}.EngineFsService` : "";
-  } catch (_) {
-    return "";
-  }
+function getServiceIds() {
+  return getTizenServiceIdCandidates("EngineFsService", {
+    configuredId: globalThis.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__
+  });
 }
 
 function invokeCallbackApi(fn, args = []) {
@@ -72,9 +62,45 @@ function invokeCallbackApi(fn, args = []) {
   });
 }
 
+async function startViaApplicationControl(serviceId, operation = TIZEN_DEFAULT_OPERATION) {
+  const application = globalThis.tizen?.application;
+  const ApplicationControl = globalThis.tizen?.ApplicationControl;
+  if (!application || typeof application.launchAppControl !== "function") {
+    throw new Error("tizen.application.launchAppControl unavailable");
+  }
+  if (typeof ApplicationControl !== "function") {
+    throw new Error("tizen.ApplicationControl unavailable");
+  }
+
+  const appControl = new ApplicationControl(operation);
+  return invokeCallbackApi(application.launchAppControl.bind(application), [appControl, serviceId]);
+}
+
+function normalizeWrtServiceModule(moduleValue) {
+  const candidates = [
+    moduleValue,
+    moduleValue?.default,
+    moduleValue?.service,
+    moduleValue?.default?.service
+  ];
+  for (const candidate of candidates) {
+    if (
+      candidate &&
+      (typeof candidate.startService === "function" || typeof candidate.start === "function")
+    ) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 async function startViaWrtService(serviceId) {
-  const wrtService =
-    globalThis.wrt?.service || globalThis.webapis?.wrt?.service || globalThis.webapis?.service;
+  const wrtService = normalizeWrtServiceModule(
+    globalThis.__NUVIO_TIZEN_WRT_SERVICE__ ||
+      globalThis.wrt?.service ||
+      globalThis.webapis?.wrt?.service ||
+      globalThis.webapis?.service
+  );
   if (!wrtService) {
     throw new Error("wrt service API unavailable");
   }
@@ -103,21 +129,59 @@ async function startViaTizenApplication(serviceId) {
   return invokeCallbackApi(application.launch.bind(application), [serviceId]);
 }
 
-async function requestServiceStart(serviceId) {
+async function requestServiceStartForId(serviceId) {
   const errors = [];
-  try {
-    await startViaWrtService(serviceId);
-    return { method: "wrt-service" };
-  } catch (error) {
-    errors.push(`wrt-service: ${error?.message || error}`);
-  }
-  try {
-    await startViaTizenApplication(serviceId);
-    return { method: "tizen-application" };
-  } catch (error) {
-    errors.push(`tizen-application: ${error?.message || error}`);
+  const legacyServiceFirst = TizenCapabilities.get().webServiceSupported === false;
+  const officialAttempts = [
+    {
+      method: "tizen-application-control-default",
+      start: () => startViaApplicationControl(serviceId, TIZEN_DEFAULT_OPERATION)
+    },
+    {
+      method: "tizen-application-launch",
+      start: () => startViaTizenApplication(serviceId)
+    },
+    {
+      method: "wrt-service-legacy",
+      start: () => startViaWrtService(serviceId)
+    }
+  ];
+  // Samsung warns that application-control launches can disturb the
+  // foreground app when web.service is reported as unavailable. Preserve the
+  // legacy path that worked on older firmware first and only use the official
+  // application-control path when the capability is true or unknown.
+  const attempts = legacyServiceFirst
+    ? officialAttempts.slice(2).concat(officialAttempts.slice(1, 2))
+    : officialAttempts;
+
+  for (const attempt of attempts) {
+    try {
+      await withTimeout(
+        attempt.start(),
+        SERVICE_START_CALL_TIMEOUT_MS,
+        `${attempt.method} service start call timed out`
+      );
+      return { method: attempt.method };
+    } catch (error) {
+      errors.push(`${attempt.method}: ${error?.message || error}`);
+    }
   }
   throw new Error(errors.join("; "));
+}
+
+async function requestServiceStart(serviceIds) {
+  const candidates = Array.isArray(serviceIds)
+    ? serviceIds.filter(Boolean)
+    : [serviceIds].filter(Boolean);
+  const errors = [];
+  for (const serviceId of candidates) {
+    try {
+      return { ...(await requestServiceStartForId(serviceId)), serviceId };
+    } catch (error) {
+      errors.push(`${serviceId}: ${error?.message || error}`);
+    }
+  }
+  throw new Error(errors.join("; ") || "Tizen EngineFS service id is unavailable");
 }
 
 async function probeBaseUrl(baseUrl, timeoutMs = PROBE_TIMEOUT_MS) {
@@ -180,9 +244,27 @@ export const TizenEngineFsService = {
     return findReachableLocalBaseUrl(timeoutMs);
   },
 
-  async ensureStarted() {
+  async ensureStarted({ purpose = "generic" } = {}) {
     if (!Platform.isTizen()) {
       return { status: "unsupported", detail: "Not running on Tizen" };
+    }
+    const capabilities = TizenCapabilities.get();
+    // `http://tizen.org/feature/web.service` is a capability hint, not proof
+    // that an already-packaged service cannot be started. Some Samsung TV
+    // firmware reports web.service=false while the declared EngineFS service
+    // is still launchable (P2P is the working real-device example). The
+    // loopback health/settings probe below is the authoritative check.
+    if (!capabilities.engineFsServicePackaged) {
+      return {
+        status: "unsupported",
+        detail: "Tizen EngineFS service is not packaged"
+      };
+    }
+    if (purpose === "p2p" && !capabilities.supportsP2p) {
+      return {
+        status: "unsupported",
+        detail: "Tizen P2P streaming is not supported on this TV"
+      };
     }
     try {
       const existing = await findReachableLocalBaseUrl();
@@ -193,17 +275,21 @@ export const TizenEngineFsService = {
 
     if (!startPromise) {
       startPromise = (async () => {
-        const serviceId = getServiceId();
-        if (!serviceId) {
+        const serviceIds = getServiceIds();
+        if (!serviceIds.length) {
           throw new Error("Tizen EngineFS service id is unavailable");
         }
-        const startResult = await requestServiceStart(serviceId);
+        const startResult = await requestServiceStart(serviceIds);
         logTizenP2pDebug("Tizen EngineFS service start requested", {
-          serviceId,
+          serviceId: startResult.serviceId,
           method: startResult.method
         });
         const reachable = await waitForLocalBaseUrl();
-        return { ...reachable, serviceId, startMethod: startResult.method };
+        return {
+          ...reachable,
+          serviceId: startResult.serviceId,
+          startMethod: startResult.method
+        };
       })().finally(() => {
         startPromise = null;
       });

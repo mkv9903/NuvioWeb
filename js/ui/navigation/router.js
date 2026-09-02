@@ -22,6 +22,7 @@ import { CatalogOrderScreen } from "../screens/plugin/catalogOrderScreen.js";
 import { StreamScreen } from "../screens/stream/streamScreen.js";
 import { CastDetailScreen } from "../screens/cast/castDetailScreen.js";
 import { CatalogSeeAllScreen } from "../screens/catalog/catalogSeeAllScreen.js";
+import { TmdbEntityBrowseScreen } from "../screens/tmdb/tmdbEntityBrowseScreen.js";
 import { FolderDetailScreen } from "../screens/collection/folderDetailScreen.js";
 import { Platform } from "../../platform/index.js";
 import { RouteStateStore } from "./routeStateStore.js";
@@ -63,9 +64,18 @@ const WEBOS_NON_RESTORABLE_ROUTES = new Set([
   "plugin",
   "plugins",
   "catalogOrder",
+  "detail",
   "player",
   "stream"
 ]);
+
+function getStackEntryRoute(entry) {
+  return typeof entry === "string" ? entry : String(entry?.route || "");
+}
+
+function getStackEntryParams(entry) {
+  return typeof entry === "string" ? {} : entry?.params || {};
+}
 
 export const Router = {
   current: null,
@@ -80,6 +90,7 @@ export const Router = {
   routeReturnBackGuardActive: false,
   routeReturnBackGuardUntil: 0,
   routeReturnBackGuardNavigationId: 0,
+  pendingHistoryReturn: null,
 
   routes: {
     home: HomeScreen,
@@ -106,6 +117,7 @@ export const Router = {
     stream: StreamScreen,
     castDetail: CastDetailScreen,
     catalogSeeAll: CatalogSeeAllScreen,
+    tmdbEntityBrowse: TmdbEntityBrowseScreen,
     folderDetail: FolderDetailScreen
   },
 
@@ -152,8 +164,104 @@ export const Router = {
       restoredState: !shouldClear && key ? RouteStateStore.get(key) : null,
       routeStateKey: key,
       fromHistory: Boolean(options?.fromHistory),
-      isBackNavigation: Boolean(options?.isBackNavigation)
+      isBackNavigation: Boolean(options?.isBackNavigation),
+      previousRoute: String(options?.previousRoute || "")
     };
+  },
+
+  async consumePendingHistoryReturn(state = null) {
+    const pending = this.pendingHistoryReturn;
+    if (!pending) {
+      return false;
+    }
+
+    this.pendingHistoryReturn = null;
+    // This history traversal is the transition we explicitly requested. Any
+    // stale one-shot/timed suppression belongs to a previous event and must not
+    // swallow the route that Android would have revealed with popBackStack().
+    this.ignoreNextPopstate = false;
+    this.suppressPopstateUntil = 0;
+
+    const targetStackIndex = Number.isInteger(pending.targetStackIndex)
+      ? pending.targetStackIndex
+      : this.stack.length - 1;
+    const stackEntry = this.stack[targetStackIndex];
+    const stackMatches =
+      this.stack.length === Number(pending.stackLength) &&
+      targetStackIndex >= 0 &&
+      getStackEntryRoute(stackEntry) === pending.route &&
+      (!pending.stackEntry || stackEntry === pending.stackEntry);
+    const routeMatches = state?.route === pending.route;
+    const sourceMatches = this.current === pending.sourceRoute;
+
+    if (sourceMatches && stackMatches && routeMatches) {
+      this.stack.splice(targetStackIndex);
+      const targetParams =
+        state?.params && typeof state.params === "object"
+          ? state.params
+          : getStackEntryParams(stackEntry) || pending.params;
+      await this.navigate(pending.route, targetParams, {
+        fromHistory: true,
+        skipStackPush: true,
+        isBackNavigation: true
+      });
+      return true;
+    }
+
+    if (sourceMatches && stackMatches && !state?.route) {
+      // A few TV browser builds can emit a null state when the app reaches the
+      // first history entry. Keep the requested Android destination instead of
+      // allowing the generic no-state path to jump to Home.
+      this.stack.splice(targetStackIndex);
+      await this.navigate(pending.route, getStackEntryParams(stackEntry) || pending.params, {
+        skipStackPush: true,
+        replaceHistory: true,
+        isBackNavigation: true
+      });
+      return true;
+    }
+
+    if (sourceMatches) {
+      // The browser has still completed the one Back traversal, but the route
+      // stack changed before its popstate arrived. Let the browser state be
+      // authoritative while preventing the old screen from consuming the
+      // same event as a second Back request.
+      this.skipConsumeNextPopstate = true;
+    }
+    return false;
+  },
+
+  restoreCurrentHistoryState(previousState = null) {
+    if (!window?.history) {
+      return;
+    }
+    const hasPreviousRouteMetadata = Object.prototype.hasOwnProperty.call(
+      previousState || {},
+      "previousRoute"
+    );
+    const currentState = {
+      route: this.current,
+      params: this.currentParams,
+      previousRoute: hasPreviousRouteMetadata
+        ? previousState.previousRoute || null
+        : previousState?.route === this.current
+          ? null
+          : previousState?.route || null
+    };
+    if (
+      previousState?.route === currentState.route &&
+      typeof window.history.replaceState === "function"
+    ) {
+      // The browser already points at this route. Replace only the params so a
+      // duplicate popstate does not append another identical history entry.
+      window.history.replaceState(currentState, "");
+      return;
+    }
+    if (typeof window.history.pushState === "function") {
+      // A real late Back moved to an older route. Push the restored current
+      // route so the older entry remains reachable on the next Back.
+      window.history.pushState(currentState, "");
+    }
   },
 
   init() {
@@ -162,25 +270,24 @@ export const Router = {
     }
     this.popstateBound = true;
     window.addEventListener("popstate", async (event) => {
+      const state = event?.state || null;
+      if (await this.consumePendingHistoryReturn(state)) {
+        return;
+      }
       if (this.ignoreNextPopstate) {
         this.ignoreNextPopstate = false;
         return;
       }
       if (Date.now() < Number(this.suppressPopstateUntil || 0)) {
-        if (window?.history && typeof window.history.pushState === "function") {
-          window.history.pushState({ route: this.current, params: this.currentParams }, "");
-        }
+        this.restoreCurrentHistoryState(state);
         return;
       }
-      const state = event?.state || null;
       if (this.consumeRouteReturnBackGuard()) {
         // A physical Tizen Back can also move browser history after its key
         // event has already completed an in-app route return. Keep that late
         // popstate on the restored screen instead of letting Home consume it
         // as a second Back and open the sidebar.
-        if (window?.history && typeof window.history.pushState === "function") {
-          window.history.pushState({ route: this.current, params: this.currentParams }, "");
-        }
+        this.restoreCurrentHistoryState(state);
         return;
       }
       if (Platform.isTizen() && this.current === "home" && state?.route === "home") {
@@ -203,12 +310,8 @@ export const Router = {
           ? currentScreen?.consumeBackRequest?.()
           : false;
       if (consumeResult) {
-        if (
-          consumeResult !== "history" &&
-          window?.history &&
-          typeof window.history.pushState === "function"
-        ) {
-          window.history.pushState({ route: this.current, params: this.currentParams }, "");
+        if (consumeResult !== "history") {
+          this.restoreCurrentHistoryState(state);
         }
         return;
       }
@@ -247,6 +350,110 @@ export const Router = {
 
   ignoreSinglePopstate() {
     this.ignoreNextPopstate = true;
+  },
+
+  popToExistingRoute(routeName, fallbackParams = {}, options = {}) {
+    const targetRoute = String(routeName || "").trim();
+    if (!targetRoute || !this.routes[targetRoute] || this.current === targetRoute) {
+      return false;
+    }
+
+    const allowSingleIntermediateRoute = Boolean(options?.allowSingleIntermediateRoute);
+
+    if (this.pendingHistoryReturn) {
+      return this.pendingHistoryReturn.route === targetRoute;
+    }
+
+    if (!this.historyInitialized || !window?.history) {
+      return false;
+    }
+
+    const currentHistoryRoute = String(window.history.state?.route || "");
+    if (currentHistoryRoute && currentHistoryRoute !== this.current) {
+      // The current route is still mounting and has not written its browser
+      // entry yet. Traversing history here would pop the caller's route instead
+      // of the Player/Stream entry; let the conservative replacement path
+      // finish the pending navigation first.
+      return false;
+    }
+
+    const topStackIndex = this.stack.length - 1;
+    const topStackRoute = getStackEntryRoute(this.stack[topStackIndex]);
+    const targetStackIndex =
+      topStackRoute === targetRoute
+        ? topStackIndex
+        : allowSingleIntermediateRoute && topStackIndex > 0
+          ? topStackIndex - 1
+          : -1;
+    if (targetStackIndex < 0) {
+      return false;
+    }
+
+    const stackEntry = this.stack[targetStackIndex];
+    if (getStackEntryRoute(stackEntry) !== targetRoute) {
+      return false;
+    }
+
+    if (allowSingleIntermediateRoute && targetRoute === "detail") {
+      const targetItemId = String(fallbackParams?.itemId || "").trim();
+      const targetItemType = String(fallbackParams?.itemType || "")
+        .trim()
+        .toLowerCase();
+      const stackParams = getStackEntryParams(stackEntry);
+      const stackItemId = String(stackParams?.itemId || "").trim();
+      const stackItemType = String(stackParams?.itemType || "")
+        .trim()
+        .toLowerCase();
+      if (
+        (targetItemId && stackItemId !== targetItemId) ||
+        (targetItemType && stackItemType && stackItemType !== targetItemType)
+      ) {
+        return false;
+      }
+    }
+
+    const historySteps = this.stack.length - targetStackIndex;
+    if (historySteps > 1 && !allowSingleIntermediateRoute) {
+      return false;
+    }
+    if (
+      (historySteps === 1 && typeof window.history.back !== "function") ||
+      (historySteps > 1 && typeof window.history.go !== "function")
+    ) {
+      return false;
+    }
+
+    const previousHistoryRoute = String(window.history.state?.previousRoute || "");
+    const expectedPreviousRoute = historySteps === 1 ? targetRoute : topStackRoute;
+    if (previousHistoryRoute && previousHistoryRoute !== expectedPreviousRoute) {
+      // The explicit history predecessor prevents treating a stale stack entry
+      // as the Android destination. For the natural-end path, one Sources
+      // entry may sit between Player and the existing Detail.
+      return false;
+    }
+
+    this.pendingHistoryReturn = {
+      route: targetRoute,
+      params: fallbackParams && typeof fallbackParams === "object" ? fallbackParams : {},
+      sourceRoute: this.current,
+      stackLength: this.stack.length,
+      stackEntry,
+      targetStackIndex,
+      requestedAt: Date.now()
+    };
+
+    try {
+      if (historySteps === 1) {
+        window.history.back();
+      } else {
+        window.history.go(-historySteps);
+      }
+      return true;
+    } catch (error) {
+      this.pendingHistoryReturn = null;
+      console.warn("Failed to return to existing route", targetRoute, error);
+      return false;
+    }
   },
 
   beginRouteReturnBackGuard(isBackNavigation = false) {
@@ -375,7 +582,10 @@ export const Router = {
 
     this.current = routeName;
     this.currentParams = targetParams;
-    const navigationContext = this.resolveNavigationContext(routeName, this.currentParams, options);
+    const navigationContext = this.resolveNavigationContext(routeName, this.currentParams, {
+      ...options,
+      previousRoute
+    });
 
     await Screen.mount(this.currentParams, navigationContext);
     this.completeRouteReturnBackGuard(routeReturnBackGuardNavigationId);
@@ -399,7 +609,11 @@ export const Router = {
     }
 
     if (window?.history && typeof window.history.pushState === "function") {
-      const state = { route: this.current, params: this.currentParams };
+      const state = {
+        route: this.current,
+        params: this.currentParams,
+        previousRoute: previousRoute || null
+      };
       if (!this.historyInitialized) {
         window.history.replaceState(state, "");
         this.historyInitialized = true;
@@ -449,6 +663,10 @@ export const Router = {
   },
 
   async back(options = {}) {
+    if (this.pendingHistoryReturn) {
+      return;
+    }
+
     const currentScreen = this.getCurrentScreen();
     const consumeResult = !options?.skipConsume ? currentScreen?.consumeBackRequest?.() : false;
     if (consumeResult) {
@@ -478,10 +696,17 @@ export const Router = {
 
     if (this.stack.length === 0) {
       if (this.current && this.current !== "home" && this.routes.home) {
+        const previousRoute = this.current;
         this.routes[this.current].cleanup?.();
         this.current = "home";
         this.currentParams = {};
-        await this.routes.home.mount();
+        await this.routes.home.mount(
+          {},
+          {
+            isBackNavigation: true,
+            previousRoute
+          }
+        );
         this.persistWebOsResumeRoute("home", {});
         return;
       }
@@ -491,19 +716,21 @@ export const Router = {
     }
 
     const previous = this.stack.pop();
-    const previousRoute = typeof previous === "string" ? previous : previous?.route;
-    const previousParams = typeof previous === "string" ? {} : previous?.params || {};
+    const previousRoute = getStackEntryRoute(previous);
+    const previousParams = getStackEntryParams(previous);
 
     if (!previousRoute || !this.routes[previousRoute]) {
       return;
     }
 
+    const fromRoute = this.current;
     this.captureCurrentRouteState();
     this.routes[this.current].cleanup?.();
     this.current = previousRoute;
     this.currentParams = previousParams;
     const navigationContext = this.resolveNavigationContext(previousRoute, previousParams, {
-      isBackNavigation: true
+      isBackNavigation: true,
+      previousRoute: fromRoute
     });
 
     await this.routes[previousRoute].mount(previousParams, navigationContext);

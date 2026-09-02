@@ -6,6 +6,7 @@ import { addonRepository } from "../../../data/repository/addonRepository.js";
 import { I18n } from "../../../i18n/index.js";
 import { Router } from "../../navigation/router.js";
 import { ScreenUtils } from "../../navigation/screen.js";
+import { renderBrandWordmarkImage } from "../../components/brandWordmark.js";
 
 function t(key, fallback) {
   return I18n.t(key, {}, { fallback });
@@ -44,7 +45,7 @@ export const ExperienceModeSelectionScreen = {
     const isLayout = this.step === "layout";
     this.container.innerHTML = `
       <main class="experience-mode-screen">
-        <img class="experience-mode-logo" src="assets/brand/app_logo_wordmark.png" alt="Nuvio" />
+        ${renderBrandWordmarkImage({ className: "experience-mode-logo" })}
         <h1>${escapeHtml(isLayout ? t("layout_selection_welcome", "Welcome to Nuvio") : t("experience_mode_choose_title", "Choose your Nuvio experience"))}</h1>
         <p>${escapeHtml(isLayout ? t("layout_selection_subtitle", "Choose how Nuvio should look on your TV.") : t("experience_mode_choose_subtitle", "Start simple or unlock every customization. You can switch anytime."))}</p>
         <div class="experience-mode-options ${isLayout ? "is-layout" : ""}">

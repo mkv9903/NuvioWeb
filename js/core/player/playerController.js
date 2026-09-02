@@ -1,12 +1,21 @@
 import { watchProgressRepository } from "../../data/repository/watchProgressRepository.js";
 import { watchedItemsRepository } from "../../data/repository/watchedItemsRepository.js";
 import { watchedSeriesReconciliationService } from "../../data/repository/watchedSeriesReconciliationService.js";
+import {
+  CloudLibraryPlaybackProgressStore,
+  CloudLibraryPlaybackSessionStore,
+  cloudPlaybackFileForSession
+} from "../../data/local/cloudLibraryPlaybackStore.js";
 import { Platform } from "../../platform/index.js";
+import { TizenPlaybackProxy } from "../../platform/tizen/tizenPlaybackProxy.js";
+import { WebOsPlaybackProxy } from "../../platform/webos/webosPlaybackProxy.js";
 import { WatchProgressSyncService } from "../profile/watchProgressSyncService.js";
 import { nativeVideoEngine } from "./engines/nativeVideoEngine.js";
 import { hlsJsEngine } from "./engines/hlsJsEngine.js";
 import { dashJsEngine } from "./engines/dashJsEngine.js";
 import { resolvePlatformAvplayEngine } from "./engines/platformAvplayEngine.js";
+import { isTerminalHlsHttpStatus } from "./hlsNetworkErrorPolicy.js";
+import { isShortPlaceholderDuration } from "./naturalPlaybackCompletion.js";
 import {
   applyWebOsAudioCodecOverrides,
   detectWebOsAudioCapabilities
@@ -14,14 +23,19 @@ import {
 import { WebOsLunaService } from "../../platform/webos/webosLunaService.js";
 import { WebOSPlayerExtensions } from "../../platform/webos/webosPlayerExtensions.js";
 import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
+import { WATCH_PROGRESS_UNKNOWN_DURATION_PERCENT } from "../../domain/model/watchProgress.js";
+import { parseAspectRatio } from "./playerAspect.js";
 
 const MIN_PROGRESS_SYNC_DURATION_MS = 1000;
+const WATCH_PROGRESS_SAVE_INTERVAL_MS = 90_000;
+const WATCH_PROGRESS_SAVE_THRESHOLD_MS = 5_000;
 const WEBOS_AUDIO_TRACK_SELECTION_TIMEOUT_MS = 4000;
 const AVPLAY_BUFFER_FOR_PLAY_SECONDS = 5;
 const AVPLAY_BUFFER_FOR_RESUME_SECONDS = 4;
 const AVPLAY_BUFFERING_TIMEOUT_SECONDS = 10;
-const HLS_TRANSIENT_LEVEL_404_RETRY_LIMIT = 2;
-const HLS_TRANSIENT_LEVEL_404_RETRY_BASE_DELAY_MS = 1500;
+// Tizen keeps Samsung's default 20-second buffering timeout; allow a short
+// grace period for the seek callback before treating the native session as stuck.
+const AVPLAY_SEEK_TIMEOUT_MS = 30_000;
 
 function logEngineFsDebug(...args) {
   if (globalThis.__NUVIO_DEBUG_ENGINEFS__) {
@@ -31,6 +45,12 @@ function logEngineFsDebug(...args) {
 
 function logTizenAvPlayDebug(...args) {
   if (globalThis.__NUVIO_DEBUG_TIZEN_AVPLAY__ || globalThis.__NUVIO_DEBUG_ENGINEFS__) {
+    console.info(...args);
+  }
+}
+
+function logWebOsPlaybackDebug(...args) {
+  if (globalThis.__NUVIO_DEBUG_WEBOS_PLAYBACK__ || globalThis.__NUVIO_DEBUG_ENGINEFS__) {
     console.info(...args);
   }
 }
@@ -58,6 +78,47 @@ function normalizeAvPlaySubtitleRenderMode(value) {
 function isAbsoluteLocalAvPlaySubtitlePath(value) {
   const path = String(value || "").trim();
   return path.startsWith("/") || /^file:\/\//i.test(path);
+}
+
+function normalizeTizenAvPlayDisplayRect(rect, viewport) {
+  const viewportWidth = Math.max(1, Math.round(Number(viewport?.width || 1920)));
+  const viewportHeight = Math.max(1, Math.round(Number(viewport?.height || 1080)));
+  const rawWidth = Math.max(1, Math.round(Number(rect?.width || viewportWidth)));
+  const rawHeight = Math.max(1, Math.round(Number(rect?.height || viewportHeight)));
+  const width = Math.min(viewportWidth, rawWidth);
+  const height = Math.min(viewportHeight, rawHeight);
+  const maxX = Math.max(0, viewportWidth - width);
+  const maxY = Math.max(0, viewportHeight - height);
+  const rawX = Math.round(Number(rect?.x || 0));
+  const rawY = Math.round(Number(rect?.y || 0));
+
+  return {
+    x: Math.min(maxX, Math.max(0, rawX)),
+    y: Math.min(maxY, Math.max(0, rawY)),
+    width,
+    height
+  };
+}
+
+function syncTizenAvPlayObjectStyle(rect) {
+  const object = globalThis.document?.getElementById?.("avPlayerObject");
+  if (!object?.style || !rect) {
+    return;
+  }
+
+  // Samsung renders AVPlay in the application/avplayer object, not in the
+  // HTML video element. Keep the object CSS rectangle in lockstep with the
+  // native display rectangle as required by the AVPlay API.
+  object.style.position = "fixed";
+  object.style.left = `${rect.x}px`;
+  object.style.top = `${rect.y}px`;
+  object.style.right = "auto";
+  object.style.bottom = "auto";
+  object.style.width = `${rect.width}px`;
+  object.style.height = `${rect.height}px`;
+  object.style.maxWidth = "none";
+  object.style.maxHeight = "none";
+  object.style.transform = "none";
 }
 
 // com.webos.media exposes five discrete subtitle sizes (0=tiny, 4=largest).
@@ -89,7 +150,10 @@ export const PlayerController = {
   currentVideoId: null,
   currentSeason: null,
   currentEpisode: null,
+  currentCloudSessionToken: null,
   progressSaveTimer: null,
+  progressSeekSyncTimer: null,
+  lastSavedProgressPositionMs: 0,
   lastProgressPushAt: 0,
   lifecycleBound: false,
   lifecycleFlushHandler: null,
@@ -122,6 +186,9 @@ export const PlayerController = {
   avplayEnded: false,
   avplayCurrentTimeMs: 0,
   avplayDurationMs: 0,
+  avplaySeekRequestToken: 0,
+  avplaySeekInFlight: false,
+  avplaySeekTimeoutTimer: null,
   avplayTrackSyncAt: 0,
   lastPlaybackErrorCode: 0,
   lastHlsErrorDiagnostic: null,
@@ -354,6 +421,9 @@ export const PlayerController = {
   getAvPlayState() {
     if (!this.isUsingAvPlay()) {
       return "";
+    }
+    if (this.avplaySeekInFlight) {
+      return "SEEKING";
     }
     const avplay = this.getAvPlay();
     if (!avplay) {
@@ -607,6 +677,13 @@ export const PlayerController = {
     }
   },
 
+  clearAvPlaySeekTimeout() {
+    if (this.avplaySeekTimeoutTimer !== null) {
+      clearTimeout(this.avplaySeekTimeoutTimer);
+      this.avplaySeekTimeoutTimer = null;
+    }
+  },
+
   startAvPlayTickTimer() {
     this.stopAvPlayTickTimer();
     this.avplayTickTimer = setInterval(() => {
@@ -792,7 +869,7 @@ export const PlayerController = {
   },
 
   refreshAvPlayTimeline() {
-    if (!this.isUsingAvPlay()) {
+    if (!this.isUsingAvPlay() || this.avplaySeekInFlight) {
       return;
     }
     const avplay = this.getAvPlay();
@@ -955,6 +1032,9 @@ export const PlayerController = {
       this.selectedAvPlayAudioTrackIndex = -1;
       this.selectedAvPlaySubtitleTrackIndex = -1;
       this.avplayTrackSyncAt = 0;
+      return;
+    }
+    if (this.avplaySeekInFlight) {
       return;
     }
 
@@ -1188,6 +1268,9 @@ export const PlayerController = {
   },
 
   getCurrentAvPlayAudioTrackIndex() {
+    if (this.avplaySeekInFlight) {
+      return -1;
+    }
     const avplay = this.getAvPlay();
     if (!avplay || typeof avplay.getCurrentStreamInfo !== "function") {
       return -1;
@@ -1245,6 +1328,9 @@ export const PlayerController = {
   },
 
   retryAvPlayAudioTrackSelection(trackIndex) {
+    if (this.avplaySeekInFlight) {
+      return false;
+    }
     const canonicalIndex = this.resolveAvPlayAudioTrackIndex(trackIndex);
     if (canonicalIndex < 0) {
       return false;
@@ -1289,6 +1375,13 @@ export const PlayerController = {
   },
 
   getAvPlaySubtitleDiagnosticSnapshot() {
+    if (this.avplaySeekInFlight) {
+      return {
+        state: "SEEKING",
+        rawTrackIndex: -1,
+        canonicalTrackIndex: -1
+      };
+    }
     const avplay = this.getAvPlay();
     const snapshot = {
       state: this.getAvPlayState(),
@@ -1340,6 +1433,9 @@ export const PlayerController = {
   },
 
   applyAvPlaySubtitleRenderMode(renderMode = this.avplaySubtitleRenderMode) {
+    if (this.avplaySeekInFlight) {
+      return false;
+    }
     const mode = normalizeAvPlaySubtitleRenderMode(renderMode);
     this.avplaySubtitleRenderMode = mode;
     const avplay = this.getAvPlay();
@@ -1385,11 +1481,12 @@ export const PlayerController = {
       return false;
     }
     const mode = normalizeAvPlaySubtitleRenderMode(renderMode);
-    // Keep the proven 0.3.31 decoder re-arm for startup and ordinary track
-    // changes. When returning from Off/an addon, keep the requested renderer
-    // active throughout selection so the reactivation retries do not switch
-    // AVPlay back through the state that already failed on affected TVs.
-    const preselectSilent = reactivate ? mode === "html" : mode === "native";
+    // Keep the proven decoder re-arm for startup, ordinary track changes, and
+    // returning from Off/an addon. Native AVPlay subtitles must be selected
+    // while the subtitle output is muted and unmuted again immediately after
+    // setSelectTrack(); otherwise some TVs report the new TEXT index without
+    // reactivating the native subtitle renderer.
+    const preselectSilent = mode === "native" || reactivate;
     try {
       avplay.setSilentSubtitle?.(preselectSilent);
     } catch (_) {
@@ -1441,6 +1538,9 @@ export const PlayerController = {
     trackIndex,
     { force = false, nudge = false, renderMode = this.avplaySubtitleRenderMode } = {}
   ) {
+    if (this.avplaySeekInFlight) {
+      return false;
+    }
     const canonicalIndex = this.resolveAvPlaySubtitleTrackIndex(trackIndex);
     if (canonicalIndex < 0) {
       return false;
@@ -1724,6 +1824,9 @@ export const PlayerController = {
   },
 
   nudgeAvPlayAfterTrackSwitch() {
+    if (this.avplaySeekInFlight) {
+      return;
+    }
     const avplay = this.getAvPlay();
     if (!avplay || typeof avplay.seekTo !== "function") {
       return;
@@ -1734,7 +1837,7 @@ export const PlayerController = {
         Number(avplay.getCurrentTime?.() || this.avplayCurrentTimeMs || 0)
       );
       if (Number.isFinite(currentMs) && currentMs > 0) {
-        avplay.seekTo(Math.max(0, currentMs - 1));
+        this.seekAvPlayTo(Math.max(0, currentMs - 1), { emitEvents: false });
       }
     } catch (_) {
       // Track switching is still valid without a seek nudge.
@@ -2015,6 +2118,9 @@ export const PlayerController = {
   },
 
   applyAvPlayExternalSubtitleDelay() {
+    if (this.avplaySeekInFlight) {
+      return false;
+    }
     const path = String(this.avplayExternalSubtitlePath || "").trim();
     if (!this.isUsingAvPlay() || !path) {
       return false;
@@ -2078,6 +2184,28 @@ export const PlayerController = {
       extraInfo.videoHeight,
       extraInfo.video_height
     ];
+    const displayAspectCandidates = [
+      videoTrack.display_aspect_ratio,
+      videoTrack.displayAspectRatio,
+      videoTrack.video_aspect_ratio,
+      videoTrack.videoAspectRatio,
+      videoTrack.dar,
+      videoTrack.aspect,
+      extraInfo.display_aspect_ratio,
+      extraInfo.displayAspectRatio,
+      extraInfo.video_aspect_ratio,
+      extraInfo.videoAspectRatio,
+      extraInfo.dar,
+      extraInfo.aspect
+    ];
+    const pixelAspectCandidates = [
+      videoTrack.pixel_aspect_ratio,
+      videoTrack.pixelAspectRatio,
+      videoTrack.par,
+      extraInfo.pixel_aspect_ratio,
+      extraInfo.pixelAspectRatio,
+      extraInfo.par
+    ];
     let width =
       widthCandidates.map(Number).find((value) => Number.isFinite(value) && value > 0) || 0;
     let height =
@@ -2096,7 +2224,16 @@ export const PlayerController = {
         height = Number(match[2]);
       }
     }
-    return width > 0 && height > 0 ? { width, height } : null;
+    if (!width || !height) {
+      return null;
+    }
+    const displayAspect = displayAspectCandidates.map(parseAspectRatio).find(Boolean) || null;
+    const pixelAspect = pixelAspectCandidates.map(parseAspectRatio).find(Boolean) || 1;
+    return {
+      width,
+      height,
+      aspect: displayAspect || (width / height) * pixelAspect
+    };
   },
 
   mapAvPlayErrorToMediaCode(errorValue) {
@@ -2222,12 +2359,17 @@ export const PlayerController = {
     if (displayMethod) {
       this.avplayDisplayMethod = String(displayMethod);
     }
-    const targetRect = this.avplayDisplayRect || {
+    let targetRect = this.avplayDisplayRect || {
       x: 0,
       y: 0,
       width: viewport.width,
       height: viewport.height
     };
+    if (Platform.isTizen()) {
+      targetRect = normalizeTizenAvPlayDisplayRect(targetRect, viewport);
+      this.avplayDisplayRect = targetRect;
+      syncTizenAvPlayObjectStyle(targetRect);
+    }
     try {
       avplay.setDisplayRect?.(targetRect.x, targetRect.y, targetRect.width, targetRect.height);
     } catch (_) {
@@ -2257,6 +2399,9 @@ export const PlayerController = {
   },
 
   teardownAvPlay() {
+    this.clearAvPlaySeekTimeout();
+    this.avplaySeekRequestToken = Number(this.avplaySeekRequestToken || 0) + 1;
+    this.avplaySeekInFlight = false;
     const avplay = this.getAvPlay();
 
     this.stopAvPlayTickTimer();
@@ -2439,6 +2584,9 @@ export const PlayerController = {
           if (!this.isPlaybackRequestActive(playToken, url)) {
             return;
           }
+          if (this.avplaySeekInFlight) {
+            return;
+          }
           this.avplayReady = true;
           this.reapplyAvPlayPlaybackRate();
           this.retryPendingAvPlayStartupAudioTrackSelection();
@@ -2447,6 +2595,9 @@ export const PlayerController = {
         },
         oncurrentplaytime: (currentTimeMs) => {
           if (!this.isPlaybackRequestActive(playToken, url)) {
+            return;
+          }
+          if (this.avplaySeekInFlight) {
             return;
           }
           const value = Number(currentTimeMs || 0);
@@ -2495,6 +2646,11 @@ export const PlayerController = {
         onerror: (errorValue) => {
           if (!this.isPlaybackRequestActive(playToken, url)) {
             return;
+          }
+          this.clearAvPlaySeekTimeout();
+          if (this.avplaySeekInFlight) {
+            this.avplaySeekInFlight = false;
+            this.avplaySeekRequestToken = Number(this.avplaySeekRequestToken || 0) + 1;
           }
           this.avplayReady = false;
           this.isPlaying = false;
@@ -2637,6 +2793,130 @@ export const PlayerController = {
     return null;
   },
 
+  seekAvPlayTo(targetMs, { emitEvents = true } = {}) {
+    if (!this.isUsingAvPlay() || this.avplaySeekInFlight) {
+      return false;
+    }
+
+    const avplay = this.getAvPlay();
+    if (!avplay) {
+      return false;
+    }
+
+    const normalizedTargetMs = Math.max(0, Math.floor(Number(targetMs) || 0));
+    const seekToken = Number(this.avplaySeekRequestToken || 0) + 1;
+    const shouldRestartTick = Boolean(this.avplayTickTimer || this.isPlaying);
+    let settled = false;
+    this.avplaySeekRequestToken = seekToken;
+    this.avplaySeekInFlight = true;
+    this.stopAvPlayTickTimer();
+
+    if (emitEvents) {
+      this.avplayReady = false;
+      this.emitVideoEvent("waiting", { playbackEngine: this.playbackEngine });
+      this.emitVideoEvent("seeking", { playbackEngine: this.playbackEngine });
+    }
+    this.avplayCurrentTimeMs = normalizedTargetMs;
+    if (emitEvents) {
+      this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
+    }
+
+    const settle = (success, errorValue = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (seekToken !== Number(this.avplaySeekRequestToken || 0) || !this.isUsingAvPlay()) {
+        return;
+      }
+      this.clearAvPlaySeekTimeout();
+
+      this.avplaySeekInFlight = false;
+      this.refreshAvPlayTimeline();
+      this.avplayReady = true;
+      this.reapplyAvPlayPlaybackRate();
+      this.retryPendingAvPlayStartupAudioTrackSelection();
+      this.applyPendingAvPlayAudioTrackSelection();
+      this.applyPendingAvPlaySubtitleTrackSelection();
+      this.applyAvPlayExternalSubtitleDelay();
+      if (shouldRestartTick) {
+        this.startAvPlayTickTimer();
+      }
+      if (!success) {
+        logTizenAvPlayDebug("Tizen AVPlay seek failed", {
+          targetMs: normalizedTargetMs,
+          error: errorValue?.message || String(errorValue || "")
+        });
+      }
+      if (emitEvents) {
+        if (success) {
+          this.emitVideoEvent("seeked", { playbackEngine: this.playbackEngine });
+        }
+        this.emitVideoEvent("canplay", { playbackEngine: this.playbackEngine });
+      }
+    };
+
+    this.avplaySeekTimeoutTimer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (seekToken !== Number(this.avplaySeekRequestToken || 0) || !this.isUsingAvPlay()) {
+        return;
+      }
+      this.clearAvPlaySeekTimeout();
+
+      const failedPlaybackEngine = this.playbackEngine;
+      const timeoutError = "PLAYER_ERROR_SEEK_FAILED (timeout)";
+      logTizenAvPlayDebug("Tizen AVPlay seek timed out; tearing down player", {
+        targetMs: normalizedTargetMs,
+        timeoutMs: AVPLAY_SEEK_TIMEOUT_MS
+      });
+      this.cancelProgressSyncAfterSeek();
+      this.teardownAvPlay();
+      this.playbackEngine = "none";
+      this.isPlaying = false;
+      this.syncWebOsPlaybackKeepAwake();
+      this.lastPlaybackErrorCode = this.mapAvPlayErrorToMediaCode("timeout");
+      this.emitVideoEvent("error", {
+        playbackEngine: failedPlaybackEngine,
+        mediaErrorCode: this.lastPlaybackErrorCode,
+        avplayError: timeoutError,
+        seekTimeout: true
+      });
+    }, AVPLAY_SEEK_TIMEOUT_MS);
+
+    try {
+      if (typeof avplay.seekTo === "function") {
+        // Samsung documents seekTo as asynchronous: no other AVPlay API may
+        // be called until one of these callbacks has completed the seek.
+        avplay.seekTo(
+          normalizedTargetMs,
+          () => settle(true),
+          (errorValue) => settle(false, errorValue)
+        );
+      } else {
+        const currentMs = Number(avplay.getCurrentTime?.() || 0);
+        if (normalizedTargetMs > currentMs && typeof avplay.jumpForward === "function") {
+          avplay.jumpForward(normalizedTargetMs - currentMs);
+          settle(true);
+        } else if (normalizedTargetMs < currentMs && typeof avplay.jumpBackward === "function") {
+          avplay.jumpBackward(currentMs - normalizedTargetMs);
+          settle(true);
+        } else if (normalizedTargetMs === currentMs) {
+          settle(true);
+        } else {
+          settle(false, "seek_not_supported");
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      settle(false, error);
+      return false;
+    }
+  },
+
   seekToSeconds(targetSeconds) {
     const seconds = Number(targetSeconds || 0);
     if (!Number.isFinite(seconds) || seconds < 0) {
@@ -2648,45 +2928,15 @@ export const PlayerController = {
         return false;
       }
       this.video.currentTime = seconds;
+      this.scheduleProgressSyncAfterSeek();
       return true;
     }
 
-    const avplay = this.getAvPlay();
-    if (!avplay) {
-      return false;
+    const didSeek = this.seekAvPlayTo(Math.max(0, Math.floor(seconds * 1000)));
+    if (didSeek) {
+      this.scheduleProgressSyncAfterSeek();
     }
-
-    const targetMs = Math.max(0, Math.floor(seconds * 1000));
-    try {
-      this.avplayReady = false;
-      this.emitVideoEvent("waiting", { playbackEngine: this.playbackEngine });
-      this.emitVideoEvent("seeking", { playbackEngine: this.playbackEngine });
-      if (typeof avplay.seekTo === "function") {
-        avplay.seekTo(targetMs);
-      } else {
-        const currentMs = Number(avplay.getCurrentTime?.() || 0);
-        if (targetMs > currentMs) {
-          avplay.jumpForward?.(targetMs - currentMs);
-        } else if (targetMs < currentMs) {
-          avplay.jumpBackward?.(currentMs - targetMs);
-        }
-      }
-      this.avplayCurrentTimeMs = targetMs;
-      this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
-      setTimeout(() => {
-        if (!this.isUsingAvPlay()) {
-          return;
-        }
-        this.refreshAvPlayTimeline();
-        this.avplayReady = true;
-        this.reapplyAvPlayPlaybackRate();
-        this.emitVideoEvent("seeked", { playbackEngine: this.playbackEngine });
-        this.emitVideoEvent("canplay", { playbackEngine: this.playbackEngine });
-      }, 120);
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return didSeek;
   },
 
   isPlaybackEnded() {
@@ -2799,6 +3049,10 @@ export const PlayerController = {
     return fields.join("; ");
   },
 
+  getLastHlsErrorDiagnostic() {
+    return this.lastHlsErrorDiagnostic ? { ...this.lastHlsErrorDiagnostic } : null;
+  },
+
   forceAvPlayFallbackForCurrentSource(reason = "fallback") {
     const url = String(
       this.currentPlaybackUrl || this.video?.currentSrc || this.video?.src || ""
@@ -2856,11 +3110,17 @@ export const PlayerController = {
     const normalized = String(itemType || "")
       .trim()
       .toLowerCase();
+    const hasEpisodeIdentity =
+      this.currentSeason != null &&
+      this.currentEpisode != null &&
+      Number.isFinite(Number(this.currentSeason)) &&
+      Number.isFinite(Number(this.currentEpisode));
     return (
       normalized === "channel" ||
       normalized === "live" ||
       normalized === "tvchannel" ||
-      normalized === "stream"
+      normalized === "stream" ||
+      (normalized === "tv" && !hasEpisodeIdentity)
     );
   },
 
@@ -2892,6 +3152,18 @@ export const PlayerController = {
       if (preferTvNative && canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
+      if (isTizenRuntime && isLivePlayback) {
+        // On affected Samsung TVs, native HLS can report support but remain
+        // stuck before the first frame. Prefer the MSE-backed HLS pipeline
+        // after AVPlay for live playback; keep native-hls as a later fallback.
+        pushCandidate(candidates, "hls.js");
+      }
+      if (!isTizenRuntime) {
+        // Android opens HLS through HlsMediaSource, which reports manifest
+        // failures directly. Prefer the equivalent hls.js pipeline here; if
+        // MSE is unavailable, playWithHlsJs falls back to native playback.
+        pushCandidate(candidates, "hls.js");
+      }
       if (canPlayNativeHls) {
         pushCandidate(candidates, "native-hls");
       }
@@ -2899,9 +3171,6 @@ export const PlayerController = {
         pushCandidate(candidates, "hls.js");
       }
       if (isTizenRuntime && !isLivePlayback) {
-        pushCandidate(candidates, "hls.js");
-      }
-      if (!isTizenRuntime && canUseHlsJs) {
         pushCandidate(candidates, "hls.js");
       }
       if (canUseAvPlay) {
@@ -3228,47 +3497,17 @@ export const PlayerController = {
     this.playbackEngine = "hls.js";
     let networkRecoveryAttempts = 0;
     let mediaRecoveryAttempts = 0;
-    let transientLevelNotFoundRetries = 0;
-    let transientLevelNotFoundRetryTimer = null;
 
-    const clearTransientLevelNotFoundRetry = () => {
-      if (transientLevelNotFoundRetryTimer) {
-        clearTimeout(transientLevelNotFoundRetryTimer);
-        transientLevelNotFoundRetryTimer = null;
-      }
-    };
-
-    const scheduleTransientLevelNotFoundRetry = () => {
-      transientLevelNotFoundRetries += 1;
-      const retryAttempt = transientLevelNotFoundRetries;
-      const retryDelayMs = HLS_TRANSIENT_LEVEL_404_RETRY_BASE_DELAY_MS * retryAttempt;
-      clearTransientLevelNotFoundRetry();
-      console.warn("[Nuvio playback] retrying transient HLS level 404", {
-        attempt: retryAttempt,
-        limit: HLS_TRANSIENT_LEVEL_404_RETRY_LIMIT,
-        delayMs: retryDelayMs
+    const emitFatalHlsNetworkError = (data = {}, responseCode = 0) => {
+      this.lastPlaybackErrorCode = 2;
+      this.teardownHlsInstance();
+      this.emitVideoEvent("error", {
+        playbackEngine: "hls.js",
+        mediaErrorCode: 2,
+        hlsErrorType: String(data.type || ""),
+        hlsErrorDetails: String(data.details || ""),
+        hlsResponseCode: Number(responseCode) || null
       });
-      transientLevelNotFoundRetryTimer = setTimeout(() => {
-        transientLevelNotFoundRetryTimer = null;
-        if (!this.isPlaybackRequestActive(playToken, url) || this.hlsInstance !== hls) {
-          return;
-        }
-        try {
-          // Reload the master manifest as bridge-generated level URLs can be
-          // temporarily unavailable or stale while a live window advances.
-          hls.loadSource(url);
-        } catch (error) {
-          console.warn("HLS level 404 retry failed", error);
-          this.lastPlaybackErrorCode = 2;
-          this.teardownHlsInstance();
-          this.emitVideoEvent("error", {
-            playbackEngine: "hls.js",
-            mediaErrorCode: 2,
-            hlsErrorType: "networkError",
-            hlsErrorDetails: "levelLoadError"
-          });
-        }
-      }, retryDelayMs);
     };
 
     hls.on(Hls.Events.ERROR, (_, data = {}) => {
@@ -3276,29 +3515,19 @@ export const PlayerController = {
         return;
       }
       this.captureHlsErrorDiagnostic(data);
+      const responseCode = Number(data?.response?.code || data?.networkDetails?.status || 0);
       if (!data?.fatal) {
         return;
       }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        const responseCode = Number(data?.response?.code || data?.networkDetails?.status || 0);
-        if (
-          String(data?.details || "") === "levelLoadError" &&
-          responseCode === 404 &&
-          transientLevelNotFoundRetries < HLS_TRANSIENT_LEVEL_404_RETRY_LIMIT
-        ) {
-          scheduleTransientLevelNotFoundRetry();
+        // Keep terminal playlist HTTP statuses aligned with Android TV; a 404
+        // points to a missing bridge-generated playlist, not a recoverable load.
+        if (isTerminalHlsHttpStatus(responseCode)) {
+          emitFatalHlsNetworkError(data, responseCode);
           return;
         }
         if (networkRecoveryAttempts >= 1) {
-          clearTransientLevelNotFoundRetry();
-          this.lastPlaybackErrorCode = 2;
-          this.teardownHlsInstance();
-          this.emitVideoEvent("error", {
-            playbackEngine: "hls.js",
-            mediaErrorCode: 2,
-            hlsErrorType: String(data.type || ""),
-            hlsErrorDetails: String(data.details || "")
-          });
+          emitFatalHlsNetworkError(data, responseCode);
           return;
         }
         try {
@@ -3337,11 +3566,6 @@ export const PlayerController = {
         hlsErrorType: String(data.type || ""),
         hlsErrorDetails: String(data.details || "")
       });
-    });
-
-    hls.on(Hls.Events.LEVEL_LOADED, () => {
-      clearTransientLevelNotFoundRetry();
-      transientLevelNotFoundRetries = 0;
     });
 
     hls.on(Hls.Events.MEDIA_ATTACHED, () => {
@@ -3748,7 +3972,7 @@ export const PlayerController = {
   },
 
   reapplyAvPlayPlaybackRate() {
-    if (!this.isUsingAvPlay()) {
+    if (!this.isUsingAvPlay() || this.avplaySeekInFlight) {
       return false;
     }
     const targetSpeed = this.normalizePlaybackRate(this.desiredPlaybackRate);
@@ -4274,6 +4498,7 @@ export const PlayerController = {
             }
           }
           this.isPlaying = false;
+          this.stopProgressSaving();
           console.warn(warningLabel, error);
           return null;
         });
@@ -4283,6 +4508,7 @@ export const PlayerController = {
           return;
         }
         this.isPlaying = false;
+        this.stopProgressSaving();
         console.warn(warningLabel, error);
       });
   },
@@ -4314,7 +4540,10 @@ export const PlayerController = {
       this.isLikelyHlsMimeType(normalizedSourceType) ||
       this.isLikelyDashMimeType(normalizedSourceType)
     ) {
-      await loadStreamingLibs();
+      await loadStreamingLibs({
+        hls: this.isLikelyHlsMimeType(normalizedSourceType),
+        dash: this.isLikelyDashMimeType(normalizedSourceType)
+      });
     }
   },
 
@@ -4336,16 +4565,21 @@ export const PlayerController = {
 
     this.video.addEventListener("ended", () => {
       this.isPlaying = false;
+      this.stopProgressSaving();
+      this.cancelProgressSyncAfterSeek();
       this.syncWebOsPlaybackKeepAwake();
       const context = this.createProgressContext();
       const durationMs = Math.floor(this.getDurationSeconds() * 1000);
-      const completedMs =
-        durationMs > 0 ? durationMs : Math.floor(this.getCurrentTimeSeconds() * 1000);
-      this.flushProgress(completedMs, durationMs > 0 ? durationMs : completedMs, false, context);
+      const positionMs = Math.floor(this.getCurrentTimeSeconds() * 1000);
+      // Android keeps an unknown-duration playback in progress. Do not turn
+      // the current live position into a synthetic finite duration here.
+      this.flushProgress(positionMs, durationMs, false, context);
     });
 
     this.video.addEventListener("error", (e) => {
       this.isPlaying = false;
+      this.stopProgressSaving();
+      this.cancelProgressSyncAfterSeek();
       this.syncWebOsPlaybackKeepAwake();
       const customErrorCode = Number(e?.detail?.mediaErrorCode || 0);
       const nativeErrorCode = Number(this.video?.error?.code || 0);
@@ -4364,11 +4598,20 @@ export const PlayerController = {
       if (event?.type === "canplay" || event?.type === "playing") {
         this.reapplyWebOsPlaybackRate().catch(() => {});
       }
+      if (event?.type === "playing" && this.playbackSessionActive && this.isPlaying) {
+        this.startProgressSaving();
+      }
     };
     this.video.addEventListener("loadedmetadata", syncNativeMediaId);
     this.video.addEventListener("loadeddata", syncNativeMediaId);
     this.video.addEventListener("canplay", syncNativeMediaId);
     this.video.addEventListener("playing", syncNativeMediaId);
+    this.video.addEventListener("waiting", () => {
+      // Android takes a local checkpoint when playback enters buffering, then
+      // waits for the next real playing event before resuming the periodic job.
+      this.saveProgressIfNeeded();
+      this.stopProgressSaving();
+    });
     this.video.addEventListener("seeked", () => {
       this.reapplyWebOsPlaybackRate().catch(() => {});
     });
@@ -4430,6 +4673,74 @@ export const PlayerController = {
     }
   },
 
+  startProgressSaving() {
+    this.stopProgressSaving();
+    this.progressSaveTimer = setInterval(() => {
+      this.saveProgressIfNeeded();
+    }, WATCH_PROGRESS_SAVE_INTERVAL_MS);
+  },
+
+  stopProgressSaving() {
+    if (this.progressSaveTimer !== null) {
+      clearInterval(this.progressSaveTimer);
+      this.progressSaveTimer = null;
+    }
+  },
+
+  saveProgressIfNeeded() {
+    if (!this.playbackSessionActive || !this.isPlaying) {
+      return false;
+    }
+
+    const positionMs = Math.floor(this.getCurrentTimeSeconds() * 1000);
+    const durationMs = Math.floor(this.getDurationSeconds() * 1000);
+    if (!Number.isFinite(positionMs) || positionMs <= 0) {
+      return false;
+    }
+    if (isShortPlaceholderDuration(durationMs)) {
+      return false;
+    }
+    if (
+      Math.abs(positionMs - Number(this.lastSavedProgressPositionMs || 0)) <
+      WATCH_PROGRESS_SAVE_THRESHOLD_MS
+    ) {
+      return false;
+    }
+
+    this.lastSavedProgressPositionMs = positionMs;
+    const context = this.createProgressContext();
+    void this.flushProgress(positionMs, durationMs, false, context, {
+      allowCloudSync: false,
+      syncRemote: false
+    }).catch((error) => {
+      console.warn("Watch progress local checkpoint failed", error);
+    });
+    return true;
+  },
+
+  cancelProgressSyncAfterSeek() {
+    if (this.progressSeekSyncTimer !== null) {
+      clearTimeout(this.progressSeekSyncTimer);
+      this.progressSeekSyncTimer = null;
+    }
+  },
+
+  scheduleProgressSyncAfterSeek() {
+    this.cancelProgressSyncAfterSeek();
+    if (!this.playbackSessionActive) {
+      return;
+    }
+    this.progressSeekSyncTimer = setTimeout(() => {
+      this.progressSeekSyncTimer = null;
+      if (!this.playbackSessionActive) {
+        return;
+      }
+      void this.flushCurrentProgress({ forceCloudSync: true }).catch((error) => {
+        console.warn("Watch progress seek sync failed", error);
+      });
+    }, 700);
+  },
+
   async play(
     url,
     {
@@ -4445,7 +4756,8 @@ export const PlayerController = {
       requestHeaders = {},
       mediaSourceType = null,
       forceEngine = null,
-      streamIdentity = null
+      streamIdentity = null,
+      cloudSessionToken = null
     } = {}
   ) {
     if (!this.video) return;
@@ -4453,6 +4765,8 @@ export const PlayerController = {
     const requestedUrl = String(url || "").trim();
     const playToken = Number(this.playRequestToken || 0) + 1;
     this.playRequestToken = playToken;
+    this.stopProgressSaving();
+    this.cancelProgressSyncAfterSeek();
 
     await this.flushCurrentProgress({ allowCloudSync: false });
     if (!this.isPlaybackRequestActive(playToken)) {
@@ -4464,6 +4778,7 @@ export const PlayerController = {
     // matching Android TV's lastKnownDuration contract.
     this.lastKnownDurationSeconds = 0;
     this.lastProgressSnapshot = null;
+    this.lastSavedProgressPositionMs = 0;
     this.playbackSessionActive = true;
     this.applyStartupAudioGateToVideo();
 
@@ -4472,6 +4787,7 @@ export const PlayerController = {
     this.currentVideoId = videoId;
     this.currentSeason = season == null ? null : Number(season);
     this.currentEpisode = episode == null ? null : Number(episode);
+    this.currentCloudSessionToken = String(cloudSessionToken || "").trim() || null;
     this.currentItemTitle = title || null;
     this.currentItemPoster = poster || null;
     this.currentItemBackground = background || null;
@@ -4492,8 +4808,37 @@ export const PlayerController = {
     if (!this.isPlaybackRequestActive(playToken, requestedUrl)) {
       return;
     }
+
+    let playbackUrl = requestedUrl;
+    const playbackProxy =
+      Platform.isTizen() && this.canUseAvPlay()
+        ? TizenPlaybackProxy
+        : Platform.isWebOS()
+          ? WebOsPlaybackProxy
+          : null;
+    if (playbackProxy) {
+      const proxyResult = await playbackProxy.resolve(requestedUrl, requestHeaders);
+      if (!this.isPlaybackRequestActive(playToken, requestedUrl)) {
+        return;
+      }
+      playbackUrl = String(proxyResult?.url || requestedUrl).trim() || requestedUrl;
+      if (proxyResult?.proxied) {
+        this.currentPlaybackUrl = playbackUrl;
+        const debugPayload = {
+          baseUrl: proxyResult.baseUrl,
+          headerNames: proxyResult.headerNames,
+          playbackUrl
+        };
+        if (Platform.isTizen()) {
+          logTizenAvPlayDebug("PlayerController: Tizen playback proxy selected", debugPayload);
+        } else {
+          logWebOsPlaybackDebug("PlayerController: webOS playback proxy selected", debugPayload);
+        }
+      }
+    }
+
     try {
-      const parsedUrl = new URL(String(url || ""));
+      const parsedUrl = new URL(String(playbackUrl || ""));
       const isEngineFsUrl = /\/([0-9a-f]{40})\/\d+(?:\/|$)/i.test(parsedUrl.pathname);
       if (isEngineFsUrl) {
         const host = parsedUrl.hostname;
@@ -4503,7 +4848,7 @@ export const PlayerController = {
             : "public-service";
         logEngineFsDebug("PlayerController: EngineFS playback selected", {
           baseUrlKind,
-          playbackUrl: String(url || ""),
+          playbackUrl,
           declaredMediaSourceType: this.currentPlaybackMediaSourceType || null,
           chosenSourceType: sourceType || null,
           playbackEngine: preferredEngine,
@@ -4513,7 +4858,10 @@ export const PlayerController = {
     } catch (_) {
       // ignore logging errors
     }
-    this.rememberPlaybackEngineAttempt(this.currentPlaybackUrl, preferredEngine, {
+    // Tizen/webOS may replace the requested source with a local proxy URL.
+    // Keep failover attempts keyed by the stable source URL because PlayerScreen
+    // asks for alternatives using the original stream URL.
+    this.rememberPlaybackEngineAttempt(requestedUrl, preferredEngine, {
       reset: !forceEngine
     });
 
@@ -4531,9 +4879,9 @@ export const PlayerController = {
         : "native-file";
 
     if (preferredEngine === this.getPlatformAvplayEngineName()) {
-      const avplayStarted = this.playWithAvPlay(url, requestHeaders, sourceType, playToken);
+      const avplayStarted = this.playWithAvPlay(playbackUrl, requestHeaders, sourceType, playToken);
       if (!avplayStarted) {
-        this.applyNativeSource(url, sourceType || null, nativeFallbackEngine);
+        this.applyNativeSource(playbackUrl, sourceType || null, nativeFallbackEngine);
         this.attemptVideoPlay({
           warningLabel: "Playback start rejected",
           playToken,
@@ -4542,7 +4890,12 @@ export const PlayerController = {
             if (!this.isUnsupportedSourceError(error) || !this.canUseAvPlay()) {
               return false;
             }
-            const fallbackStarted = this.playWithAvPlay(url, requestHeaders, sourceType, playToken);
+            const fallbackStarted = this.playWithAvPlay(
+              playbackUrl,
+              requestHeaders,
+              sourceType,
+              playToken
+            );
             if (fallbackStarted) {
               this.isPlaying = true;
             }
@@ -4551,9 +4904,13 @@ export const PlayerController = {
         });
       }
     } else if (preferredEngine === "hls.js") {
-      const hlsStarted = this.playWithHlsJs(url, requestHeaders, playToken);
+      const hlsStarted = this.playWithHlsJs(playbackUrl, requestHeaders, playToken);
       if (!hlsStarted) {
-        this.applyNativeSource(url, sourceType || "application/vnd.apple.mpegurl", "native-hls");
+        this.applyNativeSource(
+          playbackUrl,
+          sourceType || "application/vnd.apple.mpegurl",
+          "native-hls"
+        );
         this.attemptVideoPlay({
           warningLabel: "Playback start rejected",
           playToken,
@@ -4561,9 +4918,9 @@ export const PlayerController = {
         });
       }
     } else if (preferredEngine === "dash.js") {
-      const dashStarted = this.playWithDashJs(url, playToken);
+      const dashStarted = this.playWithDashJs(playbackUrl, playToken);
       if (!dashStarted) {
-        this.applyNativeSource(url, sourceType || "application/dash+xml", "native-dash");
+        this.applyNativeSource(playbackUrl, sourceType || "application/dash+xml", "native-dash");
       }
       this.attemptVideoPlay({
         warningLabel: "DASH playback start rejected",
@@ -4571,7 +4928,11 @@ export const PlayerController = {
         beforePlay: dashStarted ? null : () => this.waitForNativeMediaId()
       });
     } else if (preferredEngine === "native-hls") {
-      this.applyNativeSource(url, sourceType || "application/vnd.apple.mpegurl", "native-hls");
+      this.applyNativeSource(
+        playbackUrl,
+        sourceType || "application/vnd.apple.mpegurl",
+        "native-hls"
+      );
       this.attemptVideoPlay({
         warningLabel: "Native HLS playback start rejected",
         playToken,
@@ -4580,7 +4941,7 @@ export const PlayerController = {
           if (!this.isUnsupportedSourceError(error)) {
             return false;
           }
-          const fallbackStarted = this.playWithHlsJs(url, requestHeaders, playToken);
+          const fallbackStarted = this.playWithHlsJs(playbackUrl, requestHeaders, playToken);
           if (fallbackStarted) {
             this.isPlaying = true;
           }
@@ -4588,7 +4949,7 @@ export const PlayerController = {
         }
       });
     } else if (preferredEngine === "native-dash") {
-      this.applyNativeSource(url, sourceType || "application/dash+xml", "native-dash");
+      this.applyNativeSource(playbackUrl, sourceType || "application/dash+xml", "native-dash");
       this.attemptVideoPlay({
         warningLabel: "Native DASH playback start rejected",
         playToken,
@@ -4597,7 +4958,7 @@ export const PlayerController = {
           if (!this.isUnsupportedSourceError(error) || !this.canUseDashJs()) {
             return false;
           }
-          const fallbackStarted = this.playWithDashJs(url, playToken);
+          const fallbackStarted = this.playWithDashJs(playbackUrl, playToken);
           if (fallbackStarted) {
             this.isPlaying = true;
           }
@@ -4605,19 +4966,19 @@ export const PlayerController = {
         }
       });
     } else {
-      const isWebOsEngineFsPlayback = Platform.isWebOS() && this.isEngineFsPlaybackUrl(url);
+      const isWebOsEngineFsPlayback = Platform.isWebOS() && this.isEngineFsPlaybackUrl(playbackUrl);
       const isWebOsMatroskaPlayback =
         Platform.isWebOS() && this.normalizeMimeType(sourceType) === "video/x-matroska";
       const shouldStageWebOsNativePlayback = isWebOsEngineFsPlayback || isWebOsMatroskaPlayback;
       if (shouldStageWebOsNativePlayback) {
         // Match Stremio's webOS startup order: src -> mediaId -> load -> play.
-        this.applyWebOsStagedNativeSource(url, "native-file");
-        await this.prepareWebOsStagedNativePlayback(playToken, requestedUrl);
+        this.applyWebOsStagedNativeSource(playbackUrl, "native-file");
+        await this.prepareWebOsStagedNativePlayback(playToken, playbackUrl);
         if (!this.isPlaybackRequestActive(playToken, requestedUrl)) {
           return;
         }
       } else {
-        this.applyNativeSource(url, sourceType || null, "native-file");
+        this.applyNativeSource(playbackUrl, sourceType || null, "native-file");
       }
       this.attemptVideoPlay({
         warningLabel: "Playback start rejected",
@@ -4627,11 +4988,16 @@ export const PlayerController = {
           if (
             !this.isUnsupportedSourceError(error) ||
             !this.canUseAvPlay() ||
-            !this.isLikelyDirectFileUrl(url)
+            !this.isLikelyDirectFileUrl(playbackUrl)
           ) {
             return false;
           }
-          const fallbackStarted = this.playWithAvPlay(url, requestHeaders, sourceType, playToken);
+          const fallbackStarted = this.playWithAvPlay(
+            playbackUrl,
+            requestHeaders,
+            sourceType,
+            playToken
+          );
           if (fallbackStarted) {
             this.isPlaying = true;
           }
@@ -4642,25 +5008,14 @@ export const PlayerController = {
 
     this.isPlaying = true;
     this.syncWebOsPlaybackKeepAwake();
-
-    if (this.progressSaveTimer) {
-      clearInterval(this.progressSaveTimer);
-    }
-
-    this.progressSaveTimer = setInterval(() => {
-      const context = this.createProgressContext();
-      this.flushProgress(
-        Math.floor(this.getCurrentTimeSeconds() * 1000),
-        Math.floor(this.getDurationSeconds() * 1000),
-        false,
-        context
-      );
-    }, 5000);
+    this.startProgressSaving();
   },
 
   pause() {
     if (!this.video) return;
 
+    this.stopProgressSaving();
+    this.cancelProgressSyncAfterSeek();
     this.flushCurrentProgress({ forceCloudSync: true });
 
     if (this.isUsingAvPlay()) {
@@ -4688,7 +5043,11 @@ export const PlayerController = {
   resume() {
     if (!this.video) return;
 
-    this.flushCurrentProgress({ forceCloudSync: false });
+    this.cancelProgressSyncAfterSeek();
+    this.flushCurrentProgress({ allowCloudSync: false });
+    if (this.playbackSessionActive) {
+      this.startProgressSaving();
+    }
     if (this.startupAudioGateActive) {
       this.applyStartupAudioGateToVideo();
       return;
@@ -4741,6 +5100,8 @@ export const PlayerController = {
   stop({ forceCloudSync = true, allowCloudSync = true, flushProgress = true } = {}) {
     if (!this.video) return;
 
+    this.stopProgressSaving();
+    this.cancelProgressSyncAfterSeek();
     this.playRequestToken = Number(this.playRequestToken || 0) + 1;
     this.setStartupPresentationAudioMuted(false);
     const flushPromise = flushProgress
@@ -4748,10 +5109,6 @@ export const PlayerController = {
       : Promise.resolve(false);
     if (!this.playbackSessionActive) {
       this.syncWebOsPlaybackKeepAwake();
-      if (this.progressSaveTimer) {
-        clearInterval(this.progressSaveTimer);
-        this.progressSaveTimer = null;
-      }
       return flushPromise;
     }
     this.playbackSessionActive = false;
@@ -4789,6 +5146,7 @@ export const PlayerController = {
     this.currentVideoId = null;
     this.currentSeason = null;
     this.currentEpisode = null;
+    this.currentCloudSessionToken = null;
     this.currentItemTitle = null;
     this.currentItemPoster = null;
     this.currentItemBackground = null;
@@ -4798,15 +5156,11 @@ export const PlayerController = {
     this.currentPlaybackHeaders = {};
     this.currentPlaybackMediaSourceType = null;
     this.lastKnownDurationSeconds = 0;
+    this.lastSavedProgressPositionMs = 0;
     this.playbackEngine = "none";
     this.lastPlaybackErrorCode = 0;
     this.clearPlaybackEngineAttempts();
     this.avplayFallbackAttempts.clear();
-
-    if (this.progressSaveTimer) {
-      clearInterval(this.progressSaveTimer);
-      this.progressSaveTimer = null;
-    }
 
     return flushPromise;
   },
@@ -4815,19 +5169,21 @@ export const PlayerController = {
     const itemType = this.currentItemType || "movie";
     const normalizedItemType = String(itemType).trim().toLowerCase();
     const isSeries = normalizedItemType === "series" || normalizedItemType === "tv";
+    const isCloud = normalizedItemType === "cloud";
     return {
       itemId: this.currentItemId,
       itemType,
       // Android stores movie progress at content level and episode progress at
       // the exact season/episode identity. A movie's discovery video ID can
       // vary between addons and must not split resume state by source.
-      videoId: isSeries ? this.currentVideoId || null : null,
+      videoId: isSeries || isCloud ? this.currentVideoId || null : null,
       season: Number.isFinite(this.currentSeason) ? this.currentSeason : null,
       episode: Number.isFinite(this.currentEpisode) ? this.currentEpisode : null,
       title: this.currentItemTitle || null,
       poster: this.currentItemPoster || null,
       background: this.currentItemBackground || null,
       episodeTitle: this.currentEpisodeTitle || null,
+      cloudSessionToken: isCloud ? this.currentCloudSessionToken : null,
       streamIdentity: this.currentStreamIdentity || null
     };
   },
@@ -4894,12 +5250,51 @@ export const PlayerController = {
         : Number(snapshot?.durationMs || 0);
 
     await this.flushProgress(positionMs, durationMs, false, context, {
-      allowCloudSync: allowCloudSync && !forceCloudSync
+      allowCloudSync: allowCloudSync && !forceCloudSync,
+      syncRemote: forceCloudSync ? true : allowCloudSync
     });
-    if (forceCloudSync) {
+    if (forceCloudSync && String(context?.itemType || "").toLowerCase() !== "cloud") {
       await this.pushProgressIfDue(true);
     }
     return true;
+  },
+
+  async flushCloudLibraryProgress(positionMs, durationMs, clear = false, context = null) {
+    const active = context || this.createProgressContext();
+    const session = CloudLibraryPlaybackSessionStore.load(active?.cloudSessionToken);
+    const file = cloudPlaybackFileForSession(session);
+    if (!session?.item || !file) {
+      return false;
+    }
+
+    const safePosition = Number(positionMs || 0);
+    const safeDuration = Number(durationMs || 0);
+    const hasFiniteDuration = Number.isFinite(safeDuration) && safeDuration > 0;
+    const hasReachedMinimumSyncPosition =
+      Number.isFinite(safePosition) && safePosition >= MIN_PROGRESS_SYNC_DURATION_MS;
+    const isCompleted = hasFiniteDuration && safePosition / safeDuration >= 0.9;
+    if (safePosition > 0) {
+      this.recordProgressSnapshot(safePosition, safeDuration, active);
+    }
+    if (!clear && !isCompleted) {
+      if (hasFiniteDuration && safeDuration < MIN_PROGRESS_SYNC_DURATION_MS) {
+        return false;
+      }
+      if (!hasFiniteDuration && !hasReachedMinimumSyncPosition) {
+        return false;
+      }
+    }
+    if (!Number.isFinite(safePosition) || safePosition <= 0) {
+      return false;
+    }
+    return CloudLibraryPlaybackProgressStore.save(
+      session.item,
+      file,
+      safePosition,
+      hasFiniteDuration ? safeDuration : 0,
+      isCompleted,
+      active?.cloudSessionToken || null
+    );
   },
 
   async flushProgress(
@@ -4907,15 +5302,24 @@ export const PlayerController = {
     durationMs,
     clear = false,
     context = null,
-    { allowCloudSync = true } = {}
+    { allowCloudSync = true, syncRemote = allowCloudSync } = {}
   ) {
     const active = context || this.createProgressContext();
     if (!active?.itemId) {
       return;
     }
 
+    if (String(active.itemType || "").toLowerCase() === "cloud") {
+      return this.flushCloudLibraryProgress(positionMs, durationMs, clear, active);
+    }
+
     const safePosition = Number(positionMs || 0);
     const safeDuration = Number(durationMs || 0);
+    if (isShortPlaceholderDuration(safeDuration)) {
+      // Debrid cache-sync/error clips must not create watched state or progress
+      // records, whether this is the periodic flush or the native ended event.
+      return false;
+    }
     const hasFiniteDuration = Number.isFinite(safeDuration) && safeDuration > 0;
     const hasReachedMinimumSyncPosition =
       Number.isFinite(safePosition) && safePosition >= MIN_PROGRESS_SYNC_DURATION_MS;
@@ -4945,24 +5349,27 @@ export const PlayerController = {
 
     if (clear || isCompleted) {
       if (isCompleted) {
-        await watchProgressRepository.saveProgress({
-          contentId: active.itemId,
-          contentType: active.itemType || "movie",
-          videoId: active.videoId || null,
-          season: active.season,
-          episode: active.episode,
-          title: active.title || null,
-          poster: active.poster || null,
-          background: active.background || null,
-          logo: active.logo || null,
-          episodeTitle: active.episodeTitle || null,
-          positionMs: hasFiniteDuration
-            ? Math.max(0, Math.trunc(safeDuration))
-            : Math.max(0, Math.trunc(safePosition)),
-          durationMs: hasFiniteDuration
-            ? Math.max(0, Math.trunc(safeDuration))
-            : Math.max(0, Math.trunc(safePosition))
-        });
+        await watchProgressRepository.saveProgress(
+          {
+            contentId: active.itemId,
+            contentType: active.itemType || "movie",
+            videoId: active.videoId || null,
+            season: active.season,
+            episode: active.episode,
+            title: active.title || null,
+            poster: active.poster || null,
+            background: active.background || null,
+            logo: active.logo || null,
+            episodeTitle: active.episodeTitle || null,
+            positionMs: hasFiniteDuration
+              ? Math.max(0, Math.trunc(safeDuration))
+              : Math.max(0, Math.trunc(safePosition)),
+            durationMs: hasFiniteDuration
+              ? Math.max(0, Math.trunc(safeDuration))
+              : Math.max(0, Math.trunc(safePosition))
+          },
+          { syncRemote }
+        );
         if (watchedSeriesReconciliationService.isSeriesType(active.itemType)) {
           void watchedSeriesReconciliationService
             .reconcile(active.itemId, active.itemType, {
@@ -4989,23 +5396,27 @@ export const PlayerController = {
       return false;
     }
 
-    await watchProgressRepository.saveProgress({
-      contentId: active.itemId,
-      contentType: active.itemType || "movie",
-      videoId: active.videoId || null,
-      season: active.season,
-      episode: active.episode,
-      title: active.title || null,
-      poster: active.poster || null,
-      background: active.background || null,
-      logo: active.logo || null,
-      episodeTitle: active.episodeTitle || null,
-      // Persist the stream identity so Continue Watching can resume the same
-      // source instead of reopening the stream picker.
-      streamIdentity: active.streamIdentity || null,
-      positionMs: Math.max(0, Math.trunc(safePosition)),
-      durationMs: hasFiniteDuration ? Math.max(0, Math.trunc(safeDuration)) : 0
-    });
+    await watchProgressRepository.saveProgress(
+      {
+        contentId: active.itemId,
+        contentType: active.itemType || "movie",
+        videoId: active.videoId || null,
+        season: active.season,
+        episode: active.episode,
+        title: active.title || null,
+        poster: active.poster || null,
+        background: active.background || null,
+        logo: active.logo || null,
+        episodeTitle: active.episodeTitle || null,
+        // Persist the stream identity so Continue Watching can resume the same
+        // source instead of reopening the stream picker.
+        streamIdentity: active.streamIdentity || null,
+        positionMs: Math.max(0, Math.trunc(safePosition)),
+        durationMs: hasFiniteDuration ? Math.max(0, Math.trunc(safeDuration)) : 0,
+        progressPercent: hasFiniteDuration ? null : WATCH_PROGRESS_UNKNOWN_DURATION_PERCENT
+      },
+      { syncRemote }
+    );
     if (!allowCloudSync) {
       return true;
     }

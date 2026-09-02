@@ -66,6 +66,7 @@ export function renderModernHomeLayout({
     const rowKey = String(rowData?.homeCatalogKey || buildModernRowKey(rowData));
     const seeAllId = `${rowData.addonId || "addon"}_${rowData.catalogId || "catalog"}_${rowData.type || "movie"}`;
     if (!isLoading && !isCollectionRow) {
+      const catalogResultData = rowData?.result?.data || {};
       catalogSeeAllMap.set(seeAllId, {
         addonBaseUrl: rowData.addonBaseUrl || "",
         addonId: rowData.addonId || "",
@@ -73,7 +74,11 @@ export function renderModernHomeLayout({
         catalogId: rowData.catalogId || "",
         catalogName: rowData.catalogName || "",
         type: rowData.type || "movie",
-        initialItems: items
+        initialItems: items,
+        initialNextSkip: Number(catalogResultData.nextSkip || 0),
+        initialHasMore: Boolean(catalogResultData.hasMore),
+        supportsSkip: rowData.supportsSkip !== false && catalogResultData.supportsSkip !== false,
+        skipStep: Number(rowData.skipStep || catalogResultData.skipStep || 100)
       });
     }
 

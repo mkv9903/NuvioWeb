@@ -6,6 +6,7 @@ import { watchedItemsRepository } from "../../../data/repository/watchedItemsRep
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
 import { I18n } from "../../../i18n/index.js";
 import { Platform } from "../../../platform/index.js";
+import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 import { MODERN_HOME_CONSTANTS } from "../home/modernHomeLayout.js";
 import {
   activateLegacySidebarAction,
@@ -31,9 +32,11 @@ import {
   renderTitleWatchedBadge
 } from "../../components/watchedTitleBadge.js";
 import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
+import { filterReleasedItems } from "../../../core/util/releaseInfoUtils.js";
 import {
   buildSearchScheduleIndices,
   buildSearchTargets,
+  catalogSkipStep,
   catalogSupportsExtra
 } from "./searchCatalogTargets.js";
 
@@ -131,8 +134,7 @@ function isSearchableCatalogType(type) {
 
 function isPerformanceConstrainedRuntime() {
   return (
-    Platform.isWebOS() ||
-    Platform.isTizen() ||
+    getTvRuntimePerformanceProfile().isPerformanceConstrained ||
     Boolean(globalThis.document?.body?.classList?.contains("performance-constrained"))
   );
 }
@@ -596,7 +598,9 @@ export const SearchScreen = {
           addonName: addon.displayName,
           catalogId: catalog.id,
           catalogName: catalog.name,
-          type: catalog.apiType
+          type: catalog.apiType,
+          supportsSkip: catalogSupportsExtra(catalog, "skip"),
+          skipStep: catalogSkipStep(catalog)
         });
       });
     });
@@ -615,7 +619,8 @@ export const SearchScreen = {
             catalogName: section.catalogName,
             type: section.type,
             skip: 0,
-            supportsSkip: true
+            skipStep: section.skipStep,
+            supportsSkip: section.supportsSkip !== false
           }),
           getSearchCatalogTimeoutMs(),
           { status: "error", message: "timeout" }
@@ -645,7 +650,10 @@ export const SearchScreen = {
     return resolved
       .filter((entry) => entry.result?.status === "success" && entry.result?.data?.items?.length)
       .map((entry) => {
-        const items = entry.result?.data?.items || [];
+        const rawItems = entry.result?.data?.items || [];
+        const items = this.layoutPrefs?.hideUnreleasedContent
+          ? filterReleasedItems(rawItems)
+          : rawItems;
         return {
           title: formatCatalogRowTitle(
             entry.catalogName,
@@ -663,10 +671,15 @@ export const SearchScreen = {
           addonName: entry.addonName,
           catalogId: entry.catalogId,
           catalogName: entry.catalogName,
+          nextSkip: Number(entry.result?.data?.nextSkip || 0),
           hasMore: Boolean(items.length > itemLimit || entry.result?.data?.hasMore),
+          initialItems: items,
+          supportsSkip: entry.supportsSkip !== false && entry.result?.data?.supportsSkip !== false,
+          skipStep: Number(entry.skipStep || entry.result?.data?.skipStep || 100),
           items: items.slice(0, itemLimit)
         };
-      });
+      })
+      .filter((row) => row.items.length);
   },
 
   async searchRows(query, { token = this.loadToken, onFirstResults = null } = {}) {
@@ -690,6 +703,7 @@ export const SearchScreen = {
             catalogName: catalog.catalogName,
             type: catalog.type,
             skip: 0,
+            skipStep: catalog.skipStep,
             extraArgs: { search: query },
             supportsSkip: catalog.supportsSkip,
             signal: controller?.signal || null
@@ -712,7 +726,10 @@ export const SearchScreen = {
       responses
         .filter(({ result } = {}) => result?.status === "success" && result?.data?.items?.length)
         .map(({ catalog, result }) => {
-          const items = result?.data?.items || [];
+          const rawItems = result?.data?.items || [];
+          const items = this.layoutPrefs?.hideUnreleasedContent
+            ? filterReleasedItems(rawItems)
+            : rawItems;
           return {
             title: formatCatalogRowTitle(
               catalog.catalogName,
@@ -730,10 +747,16 @@ export const SearchScreen = {
             addonName: catalog.addonName,
             catalogId: catalog.catalogId,
             catalogName: catalog.catalogName,
+            nextSkip: Number(result?.data?.nextSkip || 0),
             hasMore: Boolean(items.length > itemLimit || result?.data?.hasMore),
+            initialItems: items,
+            supportsSkip: catalog.supportsSkip !== false && result?.data?.supportsSkip !== false,
+            extraArgs: { search: query },
+            skipStep: Number(catalog.skipStep || result?.data?.skipStep || 100),
             items: items.slice(0, itemLimit)
           };
-        });
+        })
+        .filter((row) => row.items.length);
 
     const publishFirstResults = () => {
       if (
@@ -799,6 +822,9 @@ export const SearchScreen = {
       .map((row, rowIndex) => {
         const rowKey = row.stateKey || buildRowStateKey(row, rowIndex);
         const seeAllLabel = t("action_see_all", {}, "See All");
+        const seeAllArrowClass = I18n.isRtl() ? " is-rtl" : "";
+        const seeAllItems = Array.isArray(row.initialItems) ? row.initialItems : row.items || [];
+        const hasEnoughForSeeAll = seeAllItems.length >= 15;
         return `
       <section class="search-results-row" data-row-key="${escapeHtml(rowKey)}">
         <h3 class="search-results-title">${row.title}</h3>
@@ -823,14 +849,14 @@ export const SearchScreen = {
                 ${item.poster ? `<img class="search-result-poster" src="${item.poster}" alt="${item.name || "content"}" loading="lazy" decoding="async" />` : `<div class="search-result-poster placeholder"></div>`}
                 ${isTitleItemWatched(item, this.watchedTitleIds) ? renderTitleWatchedBadge() : ""}
               </div>
-              <div class="search-result-name">${item.name || "Untitled"}</div>
+              <div class="search-result-name" dir="auto">${item.name || "Untitled"}</div>
               <div class="search-result-date">${formatReleaseYear(item)}</div>
             </article>
           `
             )
             .join("")}
           ${
-            row.hasMore || (row.items || []).length >= 15
+            hasEnoughForSeeAll
               ? `
             <article class="search-result-card search-seeall-card focusable"
                      data-action="openCatalogSeeAll"
@@ -843,7 +869,7 @@ export const SearchScreen = {
                      data-row-index="${rowIndex}"
                      data-row-key="${escapeHtml(rowKey)}">
               <div class="search-seeall-inner">
-                <div class="search-seeall-arrow" aria-hidden="true">&#8594;</div>
+                <div class="search-seeall-arrow${seeAllArrowClass}" aria-hidden="true">&#8594;</div>
                 <div class="search-seeall-label">${escapeHtml(seeAllLabel)}</div>
               </div>
             </article>
@@ -1120,7 +1146,7 @@ export const SearchScreen = {
     };
   },
 
-  resolvePreferredResultsNode(rowNodes = [], fallbackCol = 0) {
+  resolvePreferredResultsNode(rowNodes = [], _fallbackCol = 0) {
     if (!Array.isArray(rowNodes) || !rowNodes.length) {
       return null;
     }
@@ -1553,6 +1579,11 @@ export const SearchScreen = {
       if (direction === "down") {
         const firstRow = nav.rows?.[0] || [];
         const target = this.resolvePreferredResultsNode(firstRow, col);
+        if (target && current?.id === "searchInput") {
+          // Match Android TV: leaving the query field with DPAD_DOWN must dismiss the
+          // platform IME before focus moves to the first result row.
+          current.blur?.();
+        }
         return this.focusNode(current, target) || true;
       }
       if (direction === "up") {
@@ -1892,7 +1923,19 @@ export const SearchScreen = {
       catalogId: node.dataset.catalogId || "",
       catalogName: node.dataset.catalogName || "",
       type: node.dataset.catalogType || "movie",
-      initialItems: Array.isArray(sourceRow?.items) ? sourceRow.items : []
+      initialItems: Array.isArray(sourceRow?.initialItems)
+        ? sourceRow.initialItems
+        : Array.isArray(sourceRow?.items)
+          ? sourceRow.items
+          : [],
+      initialNextSkip: Number(sourceRow?.nextSkip || 0),
+      initialHasMore: Boolean(sourceRow?.hasMore),
+      supportsSkip: sourceRow?.supportsSkip !== false,
+      skipStep: Number(sourceRow?.skipStep || 100),
+      extraArgs:
+        sourceRow?.extraArgs && typeof sourceRow.extraArgs === "object"
+          ? { ...sourceRow.extraArgs }
+          : {}
     });
   },
 

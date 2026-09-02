@@ -50,6 +50,7 @@ export const FocusEngine = {
   pointerMoveFrame: null,
   pendingPointerMoveEvent: null,
   activeKeyDownStartedAt: new Map(),
+  activeBackKeyIdentities: new Set(),
 
   init() {
     this.boundHandleKey = this.handleKey.bind(this);
@@ -120,6 +121,11 @@ export const FocusEngine = {
       return;
     }
 
+    if (hasActiveModal()) {
+      Router.suppressNextPopstate?.();
+      return;
+    }
+
     Router.back();
   },
 
@@ -148,6 +154,20 @@ export const FocusEngine = {
         originalKeyCode: normalizedEvent.originalKeyCode
       })
     ) {
+      // Samsung TV delivers the mandatory Back key through keydown/keyup. A
+      // held remote key can emit another keydown after the 250 ms timing
+      // debounce, while the first Player -> Sources transition is still
+      // mounting. Treat one keydown/keyup cycle as one Android-style Back
+      // action; a later press is released first and therefore remains valid.
+      const backKeyIdentity = keyIdentity || "back";
+      if (this.activeBackKeyIdentities.has(backKeyIdentity)) {
+        normalizedEvent.preventDefault();
+        normalizedEvent.stopPropagation();
+        normalizedEvent.stopImmediatePropagation();
+        Router.consumeRouteReturnBackGuard?.();
+        return;
+      }
+      this.activeBackKeyIdentities.add(backKeyIdentity);
       this.handleBack(event, normalizedEvent);
       return;
     }
@@ -162,10 +182,21 @@ export const FocusEngine = {
   },
 
   handleKeyUp(event) {
-    if (event?.target && !document.contains(event.target)) return;
-
     const normalizedEvent = buildNormalizedEvent(event);
     const keyIdentity = this.getKeyIdentity(normalizedEvent);
+    if (
+      Platform.isBackEvent({
+        target: normalizedEvent.target,
+        key: normalizedEvent.key,
+        code: normalizedEvent.code,
+        keyName: normalizedEvent.keyName,
+        keyCode: normalizedEvent.keyCode,
+        originalKeyCode: normalizedEvent.originalKeyCode
+      })
+    ) {
+      this.activeBackKeyIdentities.delete(keyIdentity || "back");
+    }
+    if (event?.target && !document.contains(event.target)) return;
     if (hasActiveModal()) {
       if (keyIdentity) {
         this.activeKeyDownStartedAt.delete(keyIdentity);

@@ -84,7 +84,8 @@ function validateTargetUrl(rawUrl, method) {
     return { ok: false, statusCode: 400, message: "Only HTTPS Supabase URLs are allowed" };
   }
   var isSupabaseTarget =
-    isAllowedSupabaseHost(parsed.hostname) && parsed.pathname.indexOf("/rest/v1/") === 0;
+    isAllowedSupabaseHost(parsed.hostname) &&
+    (parsed.pathname.indexOf("/rest/v1/") === 0 || parsed.pathname.indexOf("/storage/v1/") === 0);
   var isDebridTarget = isAllowedDebridTarget(parsed);
   if (!isSupabaseTarget && !isDebridTarget) {
     return { ok: false, statusCode: 403, message: "Proxy target is not allowed" };

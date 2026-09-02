@@ -7,6 +7,7 @@ import { AnimeSkipSettingsStore } from "../../data/local/animeSkipSettingsStore.
 import { SupabaseApi } from "../../data/remote/supabase/supabaseApi.js";
 import { ProfileManager } from "./profileManager.js";
 import { getSyncClientId } from "../sync/syncClientIdentity.js";
+import { getSyncBackoffRemainingMs, isSyncBackoffActive } from "../sync/syncBackoffPolicy.js";
 
 const SEED_RPC = "sync_seed_provider_credentials";
 const PUSH_RPC = "sync_push_provider_credentials";
@@ -145,6 +146,26 @@ export function mergeProviderCredentialRows(snapshot, rows = []) {
   };
 }
 
+export function shouldSeedProviderCredentials(snapshot, rows = []) {
+  const remoteProviders = new Set(
+    (Array.isArray(rows) ? rows : [])
+      .map((row) =>
+        String(row?.provider || "")
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean)
+  );
+  return (snapshot?.values || []).some(
+    (credential) =>
+      !remoteProviders.has(
+        String(credential?.provider || "")
+          .trim()
+          .toLowerCase()
+      )
+  );
+}
+
 function snapshotsEqual(left, right) {
   return JSON.stringify(left?.values || []) === JSON.stringify(right?.values || []);
 }
@@ -221,7 +242,7 @@ export const ProviderCredentialSyncService = {
   foregroundPullInFlight: false,
   lastForegroundPullAtMs: 0,
 
-  queuePush(profileId = null) {
+  queuePush(profileId = null, delayMs = PUSH_DEBOUNCE_MS) {
     if (!AuthManager.isAuthenticated) return;
     const resolvedProfileId = resolveProfileId(profileId);
     void currentScope(resolvedProfileId)
@@ -231,12 +252,21 @@ export const ProviderCredentialSyncService = {
         markPending(scope);
         const existing = pushTimers.get(key);
         if (existing) clearTimeout(existing);
+        const cooldownMs = getSyncBackoffRemainingMs();
+        const effectiveDelayMs = Math.max(
+          PUSH_DEBOUNCE_MS,
+          Number(delayMs) || 0,
+          cooldownMs > 0 ? cooldownMs + 50 : 0
+        );
         pushTimers.set(
           key,
-          setTimeout(() => {
+          setTimeout(async () => {
             pushTimers.delete(key);
-            void this.pushCurrentToRemote(resolvedProfileId);
-          }, PUSH_DEBOUNCE_MS)
+            const didPush = await this.pushCurrentToRemote(resolvedProfileId);
+            if (!didPush && isSyncBackoffActive()) {
+              this.queuePush(resolvedProfileId, getSyncBackoffRemainingMs() + 50);
+            }
+          }, effectiveDelayMs)
         );
       })
       .catch((error) => console.warn("Provider credential sync scope lookup failed", error));
@@ -245,6 +275,7 @@ export const ProviderCredentialSyncService = {
   async pushCurrentToRemote(profileId = null) {
     return withSyncLock(async () => {
       try {
+        if (isSyncBackoffActive()) return false;
         const scope = await currentScope(profileId);
         if (!scope) return false;
         const snapshot = snapshotFromLocal(scope.profileId);
@@ -262,6 +293,7 @@ export const ProviderCredentialSyncService = {
   async syncFromRemote(profileId = null) {
     return withSyncLock(async () => {
       try {
+        if (isSyncBackoffActive()) return false;
         const scope = await currentScope(profileId);
         if (!scope) return false;
         const localSnapshot = snapshotFromLocal(scope.profileId);
@@ -269,8 +301,10 @@ export const ProviderCredentialSyncService = {
           await pushSnapshot(localSnapshot);
           clearPending(scope);
         }
-        await seedSnapshot(localSnapshot);
         const rows = await pullRows(scope.profileId);
+        if (shouldSeedProviderCredentials(localSnapshot, rows)) {
+          await seedSnapshot(localSnapshot);
+        }
         await requireCurrentScope(scope);
         const remoteSnapshot = mergeProviderCredentialRows(localSnapshot, rows);
         const applied = !snapshotsEqual(localSnapshot, remoteSnapshot);
@@ -286,7 +320,7 @@ export const ProviderCredentialSyncService = {
   },
 
   requestForegroundPull(force = false) {
-    if (!AuthManager.isAuthenticated) return false;
+    if (!AuthManager.isAuthenticated || isSyncBackoffActive()) return false;
     const now = Date.now();
     if (!force && (this.foregroundPullTimer || this.foregroundPullInFlight)) return false;
     if (

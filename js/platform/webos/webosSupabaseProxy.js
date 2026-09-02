@@ -37,7 +37,7 @@ function isProxyableSupabaseUrl(value = "") {
     const host = parsed.hostname.toLowerCase();
     return (
       parsed.protocol === "https:" &&
-      parsed.pathname.startsWith("/rest/v1/") &&
+      (parsed.pathname.startsWith("/rest/v1/") || parsed.pathname.startsWith("/storage/v1/")) &&
       (host === "api.nuvio.tv" || host.endsWith(".supabase.co"))
     );
   } catch (_) {
@@ -89,6 +89,23 @@ function serializeBody(body) {
   return null;
 }
 
+function decodeBase64Body(value) {
+  if (typeof value !== "string" || typeof atob !== "function") {
+    return value;
+  }
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  } catch (error) {
+    console.warn("Unable to decode webOS Supabase proxy body", error);
+    return value;
+  }
+}
+
 function buildResponseFromServicePayload(payload) {
   const status = Number(payload?.statusCode || 0);
   if (!status) {
@@ -97,9 +114,11 @@ function buildResponseFromServicePayload(payload) {
   const headers = payload?.headers && typeof payload.headers === "object" ? payload.headers : {};
   const body = NULL_BODY_RESPONSE_STATUSES.has(status)
     ? null
-    : typeof payload?.body === "string"
-      ? payload.body
-      : "";
+    : payload?.bodyEncoding === "base64"
+      ? decodeBase64Body(payload.body)
+      : typeof payload?.body === "string"
+        ? payload.body
+        : "";
   if (typeof Response === "function") {
     return new Response(body, {
       status,
@@ -110,7 +129,25 @@ function buildResponseFromServicePayload(payload) {
     status,
     ok: status >= 200 && status < 300,
     async text() {
-      return body || "";
+      if (typeof body === "string") {
+        return body || "";
+      }
+      if (typeof TextDecoder !== "undefined" && body instanceof Uint8Array) {
+        return new TextDecoder().decode(body);
+      }
+      return "";
+    },
+    async blob() {
+      if (typeof Blob === "function") {
+        return new Blob([body || new Uint8Array()]);
+      }
+      return body;
+    },
+    async arrayBuffer() {
+      if (body instanceof Uint8Array) {
+        return body.buffer;
+      }
+      return new TextEncoder().encode(String(body || "")).buffer;
     }
   };
 }

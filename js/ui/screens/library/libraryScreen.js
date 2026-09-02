@@ -3,6 +3,10 @@ import { ScreenUtils } from "../../navigation/screen.js";
 import { Environment } from "../../../platform/environment.js";
 import { Platform } from "../../../platform/index.js";
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
+import {
+  CloudLibraryPlaybackProgressStore,
+  CloudLibraryPlaybackSessionStore
+} from "../../../data/local/cloudLibraryPlaybackStore.js";
 import { I18n } from "../../../i18n/index.js";
 import {
   LibraryController,
@@ -201,6 +205,30 @@ export const LibraryScreen = {
       !nextState.listEditorState &&
       !nextState.showDeleteConfirm;
 
+    if (
+      change?.reason === "cloudSearch" &&
+      nextState?.viewMode === LIBRARY_VIEW_MODE.CLOUD &&
+      !nextState.showManageDialog &&
+      !nextState.listEditorState &&
+      !nextState.showDeleteConfirm &&
+      !nextState.cloudFilePickerItem
+    ) {
+      const searchInput = this.container?.querySelector(
+        ".library-cloud-search-input[data-cloud-search]"
+      );
+      const preserveSearchFocus =
+        searchInput &&
+        (globalThis.document?.activeElement === searchInput ||
+          searchInput.classList.contains("focused"))
+          ? searchInput
+          : null;
+      this.updateRenderedLibraryContent(nextState, {
+        preservePickerRow: true,
+        preserveFocus: preserveSearchFocus
+      });
+      return;
+    }
+
     if (change?.reason === "metadataHydration" && canRefreshLibraryContent) {
       if (this.focusZone === "sidebar") {
         this.pendingHydrationState = nextState;
@@ -300,7 +328,7 @@ export const LibraryScreen = {
           silent: true
         });
       } else if (target.matches(".library-cloud-search-input[data-cloud-search]")) {
-        this.controller.setCloudSearchQuery(target.value);
+        this.controller.setCloudSearchQuery(target.value, { reason: "cloudSearch" });
       }
     });
   },
@@ -495,8 +523,10 @@ export const LibraryScreen = {
       return `
         <div id="libraryContentAreaMount">
           ${this.renderCloudActions(state)}
-          ${this.renderCloudLibraryContent(state)}
-          ${state.transientMessage ? `<div class="library-toast">${escapeHtml(state.transientMessage)}</div>` : ""}
+          <div id="libraryCloudResultsMount">
+            ${this.renderCloudLibraryContent(state)}
+            ${state.transientMessage ? `<div class="library-toast">${escapeHtml(state.transientMessage)}</div>` : ""}
+          </div>
         </div>
       `;
     }
@@ -535,20 +565,28 @@ export const LibraryScreen = {
                  value="${escapeHtml(state.cloudSearchQuery || "")}"
                  placeholder="${escapeHtml(t("cloud_library_search_placeholder", {}, "Search files"))}" />
         </label>
-        ${
-          state.cloudSearchQuery
-            ? `<button class="library-action-button focusable"
-                       data-action="clearCloudSearch">
-                 ${escapeHtml(t("cloud_library_search_clear", {}, "Clear search"))}
-               </button>`
-            : ""
-        }
-        <button class="library-action-button focusable library-primary"
-                data-action="refreshCloudLibrary"
-                ${state.cloudLibrary.isRefreshing ? "disabled" : ""}>
-          ${escapeHtml(t("cloud_library_refresh", {}, "Refresh cloud library"))}
-        </button>
+        <div id="libraryCloudActionsMount">
+          ${this.renderCloudActionButtons(state)}
+        </div>
       </section>
+    `;
+  },
+
+  renderCloudActionButtons(state) {
+    return `
+      ${
+        state.cloudSearchQuery
+          ? `<button class="library-action-button focusable"
+                     data-action="clearCloudSearch">
+               ${escapeHtml(t("cloud_library_search_clear", {}, "Clear search"))}
+             </button>`
+          : ""
+      }
+      <button class="library-action-button focusable library-primary"
+              data-action="refreshCloudLibrary"
+              ${state.cloudLibrary.isRefreshing ? "disabled" : ""}>
+        ${escapeHtml(t("cloud_library_refresh", {}, "Refresh cloud library"))}
+      </button>
     `;
   },
 
@@ -713,7 +751,7 @@ export const LibraryScreen = {
     }
   },
 
-  updateRenderedLibraryContent(state, { preservePickerRow = true } = {}) {
+  updateRenderedLibraryContent(state, { preservePickerRow = true, preserveFocus = null } = {}) {
     if (!this.container || !this.container.querySelector(".library-shell")) {
       this.requestRender();
       return;
@@ -733,9 +771,23 @@ export const LibraryScreen = {
       }
     }
 
-    const contentMount = this.container.querySelector("#libraryContentAreaMount");
-    if (contentMount instanceof HTMLElement) {
-      contentMount.outerHTML = this.renderLibraryContentArea(state);
+    const cloudResultsMount = this.container.querySelector("#libraryCloudResultsMount");
+    const cloudActionsMount = this.container.querySelector("#libraryCloudActionsMount");
+    if (state.viewMode === LIBRARY_VIEW_MODE.CLOUD && cloudResultsMount instanceof HTMLElement) {
+      if (cloudActionsMount instanceof HTMLElement) {
+        cloudActionsMount.innerHTML = this.renderCloudActionButtons(state);
+      }
+      cloudResultsMount.outerHTML = `
+        <div id="libraryCloudResultsMount">
+          ${this.renderCloudLibraryContent(state)}
+          ${state.transientMessage ? `<div class="library-toast">${escapeHtml(state.transientMessage)}</div>` : ""}
+        </div>
+      `;
+    } else {
+      const contentMount = this.container.querySelector("#libraryContentAreaMount");
+      if (contentMount instanceof HTMLElement) {
+        contentMount.outerHTML = this.renderLibraryContentArea(state);
+      }
     }
 
     this.buildGridRows();
@@ -746,6 +798,11 @@ export const LibraryScreen = {
       onExpandSidebar: () => this.focusSidebarNode()
     });
     if (this.isModalFocusLocked()) {
+      return;
+    }
+
+    if (preserveFocus && this.container.contains(preserveFocus)) {
+      this.setFocusedNode(preserveFocus);
       return;
     }
 
@@ -1029,7 +1086,8 @@ export const LibraryScreen = {
     const posterWidth = 252;
     const posterRadius = 24;
     const libraryStyle = `--library-poster-width:${posterWidth}px;--library-poster-height:${Math.round(posterWidth * 1.5)}px;--library-poster-radius:${posterRadius}px;`;
-    if (state.isLoading || state.isSyncing) {
+    const hasLibraryItems = Array.isArray(state.allItems) && state.allItems.length > 0;
+    if (state.isLoading || (state.isSyncing && !hasLibraryItems)) {
       this.renderLoading();
       ScreenUtils.indexFocusables(this.container);
       if (!this.layoutPrefs?.modernSidebar) {
@@ -1271,6 +1329,8 @@ export const LibraryScreen = {
     } else if (this.pendingCloudSearchFocus) {
       selector = ".library-cloud-search-input.focusable";
     } else if (this.lastMainFocus?.matches?.(".library-picker-anchor")) {
+      selector = this.getMainFocusSelector(this.lastMainFocus);
+    } else if (this.lastMainFocus?.dataset?.action) {
       selector = this.getMainFocusSelector(this.lastMainFocus);
     } else if (state.lastFocusedPosterKey) {
       selector = `.library-grid-card[data-focus-key="${selectorValue(state.lastFocusedPosterKey)}"]`;
@@ -1900,6 +1960,16 @@ export const LibraryScreen = {
     if (!result?.url) return;
     const filename = result.filename || file.name || item.name;
     const streamId = `${item.stableKey}:${file.stableKey}`;
+    const cloudSessionToken = CloudLibraryPlaybackSessionStore.create({
+      item,
+      currentFileKey: file.stableKey
+    });
+    const resume = CloudLibraryPlaybackProgressStore.getResume(item, file);
+    const playableFiles = this.controller.playableFilesForCloudItem(item);
+    const sequenceIndex = Math.max(
+      0,
+      playableFiles.findIndex((candidate) => candidate.stableKey === file.stableKey)
+    );
     const stream = {
       id: streamId,
       url: result.url,
@@ -1919,6 +1989,14 @@ export const LibraryScreen = {
       videoId: streamId,
       playerTitle: filename,
       playerSubtitle: item.name,
+      episodeTitle: filename,
+      season: 1,
+      episode: sequenceIndex + 1,
+      cloudSessionToken,
+      resumePositionMs: resume?.positionMs || 0,
+      resumeDurationMs: resume?.durationMs || 0,
+      returnToStreamOnBack: false,
+      returnToLibraryOnBack: true,
       streamCandidates: [stream],
       preferredStreamId: streamId
     });

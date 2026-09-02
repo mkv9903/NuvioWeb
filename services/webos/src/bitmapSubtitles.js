@@ -22,6 +22,11 @@ var WINDOW_BUCKET_SECONDS = 90;
 var WINDOW_END_QUANTUM_SECONDS = 30;
 var MIN_WINDOW_SECONDS = 120;
 var MAX_WINDOW_SECONDS = 270;
+var MAX_TEXT_SUBTITLE_WINDOW_BYTES = 512 * 1024;
+var MAX_TEXT_ASS_BODY_BYTES = 512 * 1024;
+var MAX_TEXT_CODEC_PRIVATE_BYTES = 256 * 1024;
+var DEFAULT_TEXT_CUE_DURATION_MS = 5000;
+var MAX_TEXT_CUE_DURATION_MS = 30000;
 var MAX_CONCURRENT_CLUSTER_REQUESTS = 3;
 var MAX_CONCURRENT_CUED_BLOCK_REQUESTS = 6;
 var PGS_SYNC_SCAN_BATCH_CUES = 8;
@@ -66,6 +71,7 @@ var ID_CLUSTER_TIMECODE = 0xe7;
 var ID_SIMPLE_BLOCK = 0xa3;
 var ID_BLOCK_GROUP = 0xa0;
 var ID_BLOCK = 0xa1;
+var ID_BLOCK_DURATION = 0x9b;
 
 var PGS_SEGMENT_PRESENTATION_COMPOSITION = 0x16;
 var PGS_COMPOSITION_STATE_EPOCH_START = 0x80;
@@ -80,8 +86,11 @@ var metadataCache = new Map();
 var metadataRequests = new Map();
 var windowCache = new Map();
 var windowRequests = new Map();
+var textWindowCache = new Map();
+var textWindowRequests = new Map();
 var clusterRangeRequests = new Map();
 var activePgsWindowRequests = new Map();
+var activeTextWindowRequests = new Map();
 
 function bitmapSubtitleError(code, message, details) {
   var error = new Error(message);
@@ -151,7 +160,7 @@ function requestRange(url, start, end, maxBytes, redirects, requestContext) {
         headers: {
           Range: "bytes=" + start + "-" + end,
           "Accept-Encoding": "identity",
-          "User-Agent": "NuvioTV-Web/bitmap-subtitles"
+          "User-Agent": "NuvioTV/bitmap-subtitles"
         }
       },
       function (res) {
@@ -572,7 +581,15 @@ function validateVobSubPayload(payload) {
   return packetSize === payload.length && controlOffset >= 4 && controlOffset <= packetSize;
 }
 
-function parseBlock(data, element, track, clusterTicks, timecodeScaleNs, blockOrder) {
+function parseBlock(
+  data,
+  element,
+  track,
+  clusterTicks,
+  timecodeScaleNs,
+  blockOrder,
+  blockDurationTicks
+) {
   var raw = data.slice(element.dataStart, element.dataEnd);
   var trackVint = readVint(raw, 0);
   if (!trackVint || trackVint.value !== track.number || raw.length < trackVint.width + 3)
@@ -592,9 +609,14 @@ function parseBlock(data, element, track, clusterTicks, timecodeScaleNs, blockOr
   var absoluteTicks = clusterTicks + relativeTicks;
   if (absoluteTicks < 0) return null;
   var timestampNs = absoluteTicks * timecodeScaleNs;
+  var durationTicks = Number(blockDurationTicks || 0);
   return {
     timestampMs: timestampNs / 1000000,
     timestampNs: timestampNs,
+    durationMs:
+      Number.isFinite(durationTicks) && durationTicks > 0
+        ? (durationTicks * timecodeScaleNs) / 1000000
+        : 0,
     payload: payload,
     blockOrder: Number(blockOrder || 0)
   };
@@ -616,13 +638,23 @@ function parseCluster(data, track, timecodeScaleNs) {
   var frames = [];
   children.forEach(function (child, childIndex) {
     var block = null;
+    var blockDurationTicks = 0;
     if (child.id === ID_SIMPLE_BLOCK) {
       block = child;
     } else if (child.id === ID_BLOCK_GROUP) {
       block = findChild(data, child, ID_BLOCK);
+      blockDurationTicks = readUnsigned(data, findChild(data, child, ID_BLOCK_DURATION)) || 0;
     }
     if (!block) return;
-    var frame = parseBlock(data, block, track, clusterTicks, timecodeScaleNs, childIndex);
+    var frame = parseBlock(
+      data,
+      block,
+      track,
+      clusterTicks,
+      timecodeScaleNs,
+      childIndex,
+      blockDurationTicks
+    );
     if (frame) frames.push(frame);
   });
   return frames;
@@ -695,7 +727,7 @@ function buildClusterRanges(metadata, positions) {
   });
 }
 
-async function loadClusterFrames(mediaUrl, metadata, track, positions) {
+async function loadClusterFrames(mediaUrl, metadata, track, positions, requestContext) {
   var clusterRanges = buildClusterRanges(
     metadata,
     Array.from(new Set(positions)).sort(function (left, right) {
@@ -706,7 +738,12 @@ async function loadClusterFrames(mediaUrl, metadata, track, positions) {
     clusterRanges,
     MAX_CONCURRENT_CLUSTER_REQUESTS,
     async function (range) {
-      var response = await requestClusterRange(mediaUrl, range.absoluteStart, range.clusterSize);
+      var response = await requestClusterRange(
+        mediaUrl,
+        range.absoluteStart,
+        range.clusterSize,
+        requestContext
+      );
       return parseCluster(response.buffer, track, metadata.timecodeScaleNs).map(function (frame) {
         return Object.assign(frame, { clusterPosition: range.clusterPosition });
       });
@@ -906,7 +943,13 @@ async function loadCueFrames(mediaUrl, metadata, track, cues, requestContext) {
     });
     frames.push.apply(
       frames,
-      await loadClusterFrames(mediaUrl, metadata, track, Array.from(fallbackClusters))
+      await loadClusterFrames(
+        mediaUrl,
+        metadata,
+        track,
+        Array.from(fallbackClusters),
+        requestContext
+      )
     );
   }
   frames.sort(compareFrames);
@@ -934,6 +977,367 @@ function uniqueFramesInRange(frames, startMs, endMs) {
   return uniqueFrames;
 }
 
+function isTextSubtitleTrack(track) {
+  var codecId = String((track && track.codecId) || "");
+  return Boolean(
+    track && track.type === 0x11 && (/^S_TEXT\//i.test(codecId) || isAssSubtitleCodec(codecId))
+  );
+}
+
+function findTextSubtitleTrack(metadata, trackNumber, trackOrdinal) {
+  var normalizedTrackNumber = Math.trunc(Number(trackNumber));
+  if (Number.isFinite(normalizedTrackNumber) && normalizedTrackNumber > 0) {
+    var exactTrack = metadata.tracks.find(function (entry) {
+      return entry.number === normalizedTrackNumber && isTextSubtitleTrack(entry);
+    });
+    if (exactTrack) return exactTrack;
+  }
+
+  var normalizedTrackOrdinal = Math.trunc(Number(trackOrdinal));
+  if (!Number.isFinite(normalizedTrackOrdinal) || normalizedTrackOrdinal < 0) {
+    return null;
+  }
+  return metadata.tracks.filter(isTextSubtitleTrack)[normalizedTrackOrdinal] || null;
+}
+
+function isAssSubtitleCodec(value) {
+  var text = String(value || "").trim();
+  if (!text) return false;
+  return (
+    /^S_TEXT\/(?:ASS|SSA)$/i.test(text) ||
+    /^(?:text\/x-ass|application\/x-ass|text\/x-ssa|application\/x-ssa)$/i.test(text) ||
+    /^(?:ass|ssa|advanced substation alpha|substation alpha)$/i.test(text)
+  );
+}
+
+function isAssTextSubtitleTrack(track) {
+  return Boolean(
+    track &&
+    (isAssSubtitleCodec(track.codecId) ||
+      isAssSubtitleCodec(track.codecName) ||
+      isAssSubtitleCodec(track.codec_name))
+  );
+}
+
+function isAssTimestamp(value) {
+  return /^\s*\d+:\d{1,2}:\d{1,2}[.:]\d{1,3}\s*$/.test(String(value || ""));
+}
+
+function isRawAssControlPayload(value) {
+  var text = String(value || "").trim();
+  if (!text) return false;
+  var payload = text.replace(/^\s*(?:Dialogue|Comment)\s*:\s*/i, "");
+  // Timed Dialogue/Comment rows are valid ASS subtitle events and must be
+  // parsed below; only positional AVPlay control CSV is rejected here.
+  return (
+    /^\s*\d+\s*,\s*\d+\s*,\s*(?:Onscreen\d*|Screen)\s*,/i.test(payload) &&
+    payload.split(",").length >= 6
+  );
+}
+
+function parseAssTimestampMs(value) {
+  var match = String(value || "")
+    .trim()
+    .match(/^(\d+):(\d{1,2}):(\d{1,2})[.:](\d{1,3})$/);
+  if (!match) return NaN;
+  var fraction = String(match[4] || "0")
+    .slice(0, 3)
+    .padEnd(3, "0");
+  return (
+    Number(match[1]) * 3600000 +
+    Number(match[2]) * 60000 +
+    Number(match[3]) * 1000 +
+    Number(fraction)
+  );
+}
+
+function textAfterCommaCount(value, commaCount) {
+  var text = String(value || "");
+  var offset = 0;
+  for (var index = 0; index < commaCount; index += 1) {
+    var comma = text.indexOf(",", offset);
+    if (comma < 0) return "";
+    offset = comma + 1;
+  }
+  return text.slice(offset);
+}
+
+function decodeTextSubtitlePayload(payload) {
+  var bytes = Buffer.from(payload || []);
+  var text;
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    text = bytes.slice(3).toString("utf8");
+  } else if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    text = bytes.slice(2).toString("utf16le");
+  } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    var swapped = Buffer.alloc(bytes.length - 2);
+    for (var index = 2; index + 1 < bytes.length; index += 2) {
+      swapped[index - 2] = bytes[index + 1];
+      swapped[index - 1] = bytes[index];
+    }
+    text = swapped.toString("utf16le");
+  } else {
+    text = bytes.toString("utf8");
+  }
+  return text
+    .replace(/\0/g, "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .trim();
+}
+
+function normalizeTextSubtitlePayload(track, payload) {
+  var text = decodeTextSubtitlePayload(payload);
+  if (!text) return "";
+
+  // Inspect the original payload before removing Dialogue:/Comment: so
+  // structured ASS control rows are filtered without dropping plain cue text.
+  if (isAssTextSubtitleTrack(track) && isRawAssControlPayload(text)) {
+    return "";
+  }
+  var assEvent = text.replace(/^\s*Dialogue\s*:\s*/i, "");
+  // ASS-specific parsing follows the original-payload control check above.
+  var fields = assEvent.split(",");
+
+  var hasLayeredAssTiming =
+    fields.length >= 3 &&
+    /^(?:marked\s*=\s*)?-?\d+$/i.test(String(fields[0] || "").trim()) &&
+    isAssTimestamp(fields[1]) &&
+    isAssTimestamp(fields[2]);
+  var hasShortAssTiming =
+    fields.length >= 3 && isAssTimestamp(fields[0]) && isAssTimestamp(fields[1]);
+  // webOS may strip Start/End and expose the positional form
+  // "Layer,?,Style,Name,MarginL,MarginR,MarginV,Effect,Text" with no
+  // timestamps (e.g. 0,0,Flashback_Italics - Top,News,0,0,0,,text).
+  var hasPositionalAssShape =
+    isAssTextSubtitleTrack(track) &&
+    !hasLayeredAssTiming &&
+    !hasShortAssTiming &&
+    fields.length >= 9 &&
+    /^-?\d+$/.test(String(fields[0] || "").trim()) &&
+    /^-?\d+$/.test(String(fields[1] || "").trim());
+  if (hasLayeredAssTiming) {
+    text = textAfterCommaCount(assEvent, 9) || "";
+  } else if (hasShortAssTiming) {
+    text = textAfterCommaCount(assEvent, fields.length >= 9 ? 8 : 2) || "";
+  } else if (hasPositionalAssShape) {
+    text = textAfterCommaCount(assEvent, 8) || "";
+  } else if (isAssTextSubtitleTrack(track)) {
+    text = assEvent;
+  }
+
+  return text.replace(/\n{2,}/g, "\n").trim();
+}
+
+function hasAssOverrideTags(text) {
+  return /\{[^}\r\n]*\\(?:[A-Za-z]|[1-4][A-Za-z])/.test(String(text || ""));
+}
+
+function hasAdvancedAssOverrideTags(text) {
+  return /\{[^}\r\n]*\\(?!(?:an[1-9]\b|[NnHh]\b))[A-Za-z0-9]/i.test(String(text || ""));
+}
+
+function getEmbeddedAssCueDurationMs(frame) {
+  var raw = decodeTextSubtitlePayload(frame && frame.payload);
+  if (!raw) return 0;
+  var event = raw.replace(/^\s*Dialogue\s*:\s*/i, "");
+  var fields = event.split(",");
+  var startIndex = -1;
+  var endIndex = -1;
+  if (fields.length >= 3 && isAssTimestamp(fields[1]) && isAssTimestamp(fields[2])) {
+    startIndex = 1;
+    endIndex = 2;
+  } else if (fields.length >= 2 && isAssTimestamp(fields[0]) && isAssTimestamp(fields[1])) {
+    startIndex = 0;
+    endIndex = 1;
+  }
+  if (startIndex < 0) return 0;
+  var startMs = parseAssTimestampMs(fields[startIndex]);
+  var endMs = parseAssTimestampMs(fields[endIndex]);
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
+    ? endMs - startMs
+    : 0;
+}
+
+function getTextCueEndMs(frame, nextFrame) {
+  var startMs = Number(frame && frame.timestampMs);
+  if (!Number.isFinite(startMs)) return 0;
+  var embeddedDurationMs = getEmbeddedAssCueDurationMs(frame);
+  if (embeddedDurationMs > 0) {
+    return startMs + Math.min(embeddedDurationMs, MAX_TEXT_CUE_DURATION_MS);
+  }
+  var durationMs = Number(frame && frame.durationMs);
+  if (Number.isFinite(durationMs) && durationMs > 0) {
+    return startMs + Math.min(durationMs, MAX_TEXT_CUE_DURATION_MS);
+  }
+  var nextStartMs = Number(nextFrame && nextFrame.timestampMs);
+  if (Number.isFinite(nextStartMs) && nextStartMs > startMs) {
+    return Math.min(nextStartMs, startMs + MAX_TEXT_CUE_DURATION_MS);
+  }
+  return startMs + DEFAULT_TEXT_CUE_DURATION_MS;
+}
+
+function selectTextFramesInRange(frames, startMs, endMs) {
+  var contextStartMs = Math.max(0, startMs - 30000);
+  var candidates = uniqueFramesInRange(frames, contextStartMs, endMs);
+  return candidates.filter(function (frame, index) {
+    var cueEndMs = getTextCueEndMs(frame, candidates[index + 1]);
+    return frame.timestampMs < endMs && cueEndMs > startMs;
+  });
+}
+
+function formatAssTimestamp(timestampMs) {
+  var total = Math.max(0, Math.round(Number(timestampMs) || 0));
+  var hours = Math.floor(total / 3600000);
+  var minutes = Math.floor((total % 3600000) / 60000);
+  var seconds = Math.floor((total % 60000) / 1000);
+  var centiseconds = Math.floor((total % 1000) / 10);
+  return (
+    String(hours) +
+    ":" +
+    padLeft(minutes, 2) +
+    ":" +
+    padLeft(seconds, 2) +
+    "." +
+    padLeft(centiseconds, 2)
+  );
+}
+
+function buildDefaultAssHeader() {
+  return [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    "PlayResX: 1920",
+    "PlayResY: 1080",
+    "ScaledBorderAndShadow: yes",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    "Style: Default,Roboto,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,30,30,30,1",
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ""
+  ].join("\n");
+}
+
+function normalizeAssHeader(codecPrivate) {
+  var header = Buffer.from(codecPrivate || [])
+    .slice(0, MAX_TEXT_CODEC_PRIVATE_BYTES)
+    .toString("utf8")
+    .replace(/\0/g, "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter(function (line) {
+      return !/^\s*Dialogue\s*:/i.test(line);
+    })
+    .join("\n")
+    .trim();
+  var eventsIndex = header.search(/^\s*\[Events\]\s*$/im);
+  var eventsSection = eventsIndex >= 0 ? header.slice(eventsIndex) : "";
+  if (
+    !/^\s*\[Script Info\]\s*$/im.test(header) ||
+    !/^\s*\[V4(?:\+)? Styles(?:\+)?\]\s*$/im.test(header) ||
+    eventsIndex < 0 ||
+    !/^\s*Format\s*:/im.test(eventsSection)
+  ) {
+    return buildDefaultAssHeader();
+  }
+  return header + "\n";
+}
+
+function getAssDialogueText(track, frame) {
+  var raw = decodeTextSubtitlePayload(frame && frame.payload);
+  if (!raw) return "";
+  var event = raw.replace(/^\s*Dialogue\s*:\s*/i, "");
+  var fields = event.split(",");
+  if (fields.length >= 10 && isAssTimestamp(fields[1]) && isAssTimestamp(fields[2])) {
+    return fields.slice(9).join(",").trim();
+  }
+  if (
+    fields.length >= 9 &&
+    isAssTimestamp(fields[0]) &&
+    isAssTimestamp(fields[1]) &&
+    isAssTextSubtitleTrack(track)
+  ) {
+    return fields.slice(8).join(",").trim();
+  }
+  return normalizeTextSubtitlePayload(track, frame && frame.payload);
+}
+
+function buildAssDialogueLine(track, frame, nextFrame) {
+  var text = getAssDialogueText(track, frame);
+  if (!text) return "";
+  var startMs = Number(frame && frame.timestampMs);
+  var endMs = getTextCueEndMs(frame, nextFrame);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return "";
+  var raw = decodeTextSubtitlePayload(frame && frame.payload);
+  var event = raw.replace(/^\s*Dialogue\s*:\s*/i, "");
+  var fields = event.split(",");
+  if (fields.length >= 10 && isAssTimestamp(fields[1]) && isAssTimestamp(fields[2])) {
+    fields[1] = formatAssTimestamp(startMs);
+    fields[2] = formatAssTimestamp(endMs);
+    return "Dialogue: " + fields.slice(0, 9).concat(fields.slice(9).join(",")).join(",");
+  }
+  // Preserve leading ASS fields only for the two shapes that carry them.
+  // Metadata alone is not enough: webOS can expose ordinary cue text as a
+  // comma-separated row, and treating its first fields as Style/Name/Margins
+  // duplicates that prefix in the generated Dialogue line.
+  var hasShortTiming = fields.length >= 9 && isAssTimestamp(fields[0]) && isAssTimestamp(fields[1]);
+  var hasPositionalShape =
+    isAssTextSubtitleTrack(track) &&
+    fields.length >= 9 &&
+    /^-?\d+$/.test(String(fields[0] || "").trim()) &&
+    /^-?\d+$/.test(String(fields[1] || "").trim()) &&
+    /^-?\d+$/.test(String(fields[4] || "").trim()) &&
+    /^-?\d+$/.test(String(fields[5] || "").trim()) &&
+    /^-?\d+$/.test(String(fields[6] || "").trim()) &&
+    String(fields[7] || "").trim() === "";
+  var hasStructuredFields = hasShortTiming || hasPositionalShape;
+  var assText = text.replace(/\r?\n/g, "\\N");
+  // Positional form carries the ASS Layer in fields[0]; short SSA has none,
+  // so default it to 0. Preserve a non-zero layer to keep stacking order.
+  var layer = hasPositionalShape ? String(fields[0] || "").trim() || "0" : "0";
+  var style = hasStructuredFields ? String(fields[2] || "").trim() || "Default" : "Default";
+  var name = hasStructuredFields ? String(fields[3] || "").trim() : "";
+  var marginL = hasStructuredFields ? String(fields[4] || "").trim() || "0" : "0";
+  var marginR = hasStructuredFields ? String(fields[5] || "").trim() || "0" : "0";
+  var marginV = hasStructuredFields ? String(fields[6] || "").trim() || "0" : "0";
+  var effect = hasStructuredFields ? String(fields[7] || "").trim() : "";
+  return (
+    "Dialogue: " +
+    layer +
+    "," +
+    formatAssTimestamp(startMs) +
+    "," +
+    formatAssTimestamp(endMs) +
+    "," +
+    style +
+    "," +
+    name +
+    "," +
+    marginL +
+    "," +
+    marginR +
+    "," +
+    marginV +
+    "," +
+    effect +
+    "," +
+    assText
+  );
+}
+
+function buildAssSubtitleBody(track, frames) {
+  var events = [];
+  frames.forEach(function (frame, index) {
+    var line = buildAssDialogueLine(track, frame, frames[index + 1]);
+    if (line) events.push(line);
+  });
+  return normalizeAssHeader(track && track.codecPrivate) + events.join("\n") + "\n";
+}
+
 async function mapWithConcurrency(items, concurrency, iteratee) {
   var results = new Array(items.length);
   var nextIndex = 0;
@@ -953,8 +1357,11 @@ async function mapWithConcurrency(items, concurrency, iteratee) {
   return results;
 }
 
-function requestClusterRange(mediaUrl, absoluteStart, clusterSize) {
+function requestClusterRange(mediaUrl, absoluteStart, clusterSize, requestContext) {
   var absoluteEnd = absoluteStart + clusterSize - 1;
+  if (requestContext) {
+    return requestRange(mediaUrl, absoluteStart, absoluteEnd, MAX_CLUSTER_BYTES, 0, requestContext);
+  }
   var key = mediaUrl + "::" + absoluteStart + "::" + absoluteEnd;
   if (clusterRangeRequests.has(key)) return clusterRangeRequests.get(key);
   var request = requestRange(mediaUrl, absoluteStart, absoluteEnd, MAX_CLUSTER_BYTES);
@@ -1210,6 +1617,64 @@ function formatTimestamp(timestampMs) {
   );
 }
 
+function formatVttTimestamp(timestampMs) {
+  return formatTimestamp(timestampMs).replace(/:(\d{3})$/, ".$1");
+}
+
+function buildTextSubtitleWindowPayload(track, frames, startMs, endMs, options) {
+  var cueBlocks = [];
+  var outputBytes = Buffer.byteLength("WEBVTT\n\n", "utf8");
+  var hasOverrides = false;
+  var hasAdvancedOverrides = false;
+  frames.forEach(function (frame, index) {
+    var text = normalizeTextSubtitlePayload(track, frame.payload);
+    if (!text) return;
+    var cueStartMs = Number(frame.timestampMs);
+    var cueEndMs = getTextCueEndMs(frame, frames[index + 1]);
+    if (!Number.isFinite(cueStartMs) || cueEndMs <= startMs || cueStartMs >= endMs) return;
+    var block = [
+      String(cueBlocks.length + 1),
+      formatVttTimestamp(Math.max(0, cueStartMs)) +
+        " --> " +
+        formatVttTimestamp(Math.max(cueStartMs + 1, Math.min(endMs, cueEndMs))),
+      text
+    ].join("\n");
+    var blockBytes = Buffer.byteLength(block, "utf8") + (cueBlocks.length ? 2 : 0);
+    if (outputBytes + blockBytes + 2 > MAX_TEXT_SUBTITLE_WINDOW_BYTES) {
+      throw bitmapSubtitleError(
+        "TEXT_WINDOW_TOO_LARGE",
+        "Embedded text subtitle window exceeded its safety limit"
+      );
+    }
+    outputBytes += blockBytes;
+    cueBlocks.push(block);
+    hasOverrides = hasOverrides || hasAssOverrideTags(text);
+    hasAdvancedOverrides = hasAdvancedOverrides || hasAdvancedAssOverrideTags(text);
+  });
+  var body = "WEBVTT\n\n" + (cueBlocks.length ? cueBlocks.join("\n\n") + "\n\n" : "");
+  var includeAssBody =
+    Boolean(options && options.includeAssBody) ||
+    isAssTextSubtitleTrack(track) ||
+    hasAdvancedOverrides;
+  var assBody = includeAssBody ? buildAssSubtitleBody(track, frames) : "";
+  if (Buffer.byteLength(assBody, "utf8") > MAX_TEXT_ASS_BODY_BYTES) {
+    throw bitmapSubtitleError(
+      "TEXT_ASS_WINDOW_TOO_LARGE",
+      "Embedded ASS subtitle window exceeded its safety limit"
+    );
+  }
+  return {
+    format: "vtt",
+    cueCount: cueBlocks.length,
+    body: body,
+    bodyBytes: Buffer.byteLength(body, "utf8"),
+    bodyTruncated: false,
+    hasAssOverrideTags: hasOverrides,
+    hasAdvancedAssOverrideTags: hasAdvancedOverrides,
+    assBody: assBody
+  };
+}
+
 function normalizeIdxHeader(codecPrivate) {
   return (
     codecPrivate
@@ -1329,7 +1794,7 @@ async function buildWindow(mediaUrl, trackNumber, startSeconds, endSeconds, requ
     );
     loadedFrames.sort(compareFrames);
   } else {
-    loadedFrames = await loadClusterFrames(mediaUrl, metadata, track, positions);
+    loadedFrames = await loadClusterFrames(mediaUrl, metadata, track, positions, requestContext);
   }
   var frames = uniqueFramesInRange(loadedFrames, contextStartMs, endMs);
   var payload =
@@ -1343,6 +1808,111 @@ async function buildWindow(mediaUrl, trackNumber, startSeconds, endSeconds, requ
     contextStartSeconds: contextStartMs / 1000,
     contextType: contextType
   });
+}
+
+async function buildTextWindow(
+  mediaUrl,
+  trackNumber,
+  trackOrdinal,
+  startSeconds,
+  endSeconds,
+  includeAssBody,
+  requestContext
+) {
+  var metadata = await loadMetadata(mediaUrl);
+  var track = findTextSubtitleTrack(metadata, trackNumber, trackOrdinal);
+  if (!track) {
+    throw bitmapSubtitleError(
+      "TRACK_NOT_FOUND",
+      "Requested embedded text subtitle track was not found"
+    );
+  }
+  var startMs = Math.max(0, Math.floor(startSeconds * 1000));
+  var endMs = Math.max(startMs + 1000, Math.floor(endSeconds * 1000));
+  var resolvedTrackNumber = track.number;
+  var positions = selectClusterPositions(metadata, resolvedTrackNumber, startMs, endMs);
+  var loadedFrames = await loadClusterFrames(mediaUrl, metadata, track, positions, requestContext);
+  var frames = selectTextFramesInRange(loadedFrames, startMs, endMs);
+  var payload = buildTextSubtitleWindowPayload(track, frames, startMs, endMs, {
+    includeAssBody: includeAssBody
+  });
+  return Object.assign(payload, {
+    trackNumber: resolvedTrackNumber,
+    codecId: track.codecId || "",
+    language: track.language || "",
+    name: track.name || "",
+    windowStartSeconds: startMs / 1000,
+    windowEndSeconds: endMs / 1000,
+    contextStartSeconds: Math.max(0, startMs - 30000) / 1000
+  });
+}
+
+async function getEmbeddedTextSubtitleWindow(options) {
+  var mediaUrl = normalizeMediaUrl(options && options.url);
+  var trackNumber = Math.trunc(Number(options && options.trackNumber));
+  var trackOrdinal = Math.trunc(Number(options && options.trackOrdinal));
+  var startSeconds = Math.max(0, Number(options && options.startSeconds) || 0);
+  var includeAssBody = Boolean(options && options.includeAssBody);
+  var requestedEnd = Number(options && options.endSeconds);
+  var endSeconds = Number.isFinite(requestedEnd)
+    ? Math.min(startSeconds + 180, Math.max(startSeconds + 1, requestedEnd))
+    : startSeconds + 120;
+  if (
+    (!Number.isFinite(trackNumber) || trackNumber <= 0) &&
+    (!Number.isFinite(trackOrdinal) || trackOrdinal < 0)
+  ) {
+    throw bitmapSubtitleError(
+      "INVALID_TRACK",
+      "Embedded text subtitle track number or ordinal is invalid"
+    );
+  }
+  var normalizedWindow = normalizeWindowRange(startSeconds, endSeconds);
+  var bucketStart = normalizedWindow.startSeconds;
+  var bucketEnd = normalizedWindow.endSeconds;
+  var trackKey =
+    Number.isFinite(trackNumber) && trackNumber > 0
+      ? "number:" + trackNumber
+      : "ordinal:" + trackOrdinal;
+  var activeKey = mediaUrl + "::" + trackKey;
+  var cacheKey =
+    mediaUrl +
+    "::" +
+    trackKey +
+    "::" +
+    bucketStart +
+    "::" +
+    bucketEnd +
+    "::ass=" +
+    (includeAssBody ? "1" : "0");
+  var cached = getCached(textWindowCache, cacheKey);
+  if (cached) {
+    cancelActiveTextWindowRequest(activeKey);
+    return cached;
+  }
+  if (textWindowRequests.has(cacheKey)) return textWindowRequests.get(cacheKey);
+  cancelActiveTextWindowRequest(activeKey);
+  var requestContext = { cancelled: false, requests: new Set(), cacheKey: cacheKey };
+  activeTextWindowRequests.set(activeKey, requestContext);
+  var request = buildTextWindow(
+    mediaUrl,
+    trackNumber,
+    trackOrdinal,
+    bucketStart,
+    bucketEnd,
+    includeAssBody,
+    requestContext
+  );
+  textWindowRequests.set(cacheKey, request);
+  try {
+    var result = await request;
+    setCached(textWindowCache, cacheKey, result, WINDOW_CACHE_TTL_MS, MAX_WINDOW_CACHE_ENTRIES);
+    return result;
+  } finally {
+    if (textWindowRequests.get(cacheKey) === request) textWindowRequests.delete(cacheKey);
+    if (activeTextWindowRequests.get(activeKey) === requestContext) {
+      activeTextWindowRequests.delete(activeKey);
+    }
+  }
 }
 
 async function getBitmapSubtitleWindow(options) {
@@ -1402,6 +1972,16 @@ function cancelActivePgsWindowRequest(activeKey) {
   activePgsWindowRequests.delete(activeKey);
 }
 
+function cancelActiveTextWindowRequest(activeKey) {
+  var requestContext = activeTextWindowRequests.get(activeKey);
+  if (!requestContext) return;
+  cancelRequestContext(requestContext);
+  if (requestContext.cacheKey) {
+    textWindowRequests.delete(requestContext.cacheKey);
+  }
+  activeTextWindowRequests.delete(activeKey);
+}
+
 function cancelRequestContext(requestContext) {
   requestContext.cancelled = true;
   requestContext.requests.forEach(function (activeRequest) {
@@ -1437,7 +2017,12 @@ function clearBitmapSubtitleCaches() {
   metadataRequests.clear();
   windowCache.clear();
   windowRequests.clear();
+  textWindowCache.clear();
+  textWindowRequests.clear();
   clusterRangeRequests.clear();
+  Array.from(activeTextWindowRequests.keys()).forEach(function (activeKey) {
+    cancelActiveTextWindowRequest(activeKey);
+  });
   Array.from(activePgsWindowRequests.keys()).forEach(function (activeKey) {
     cancelActivePgsWindowRequest(activeKey);
   });
@@ -1445,6 +2030,7 @@ function clearBitmapSubtitleCaches() {
 
 module.exports = {
   getBitmapSubtitleWindow: getBitmapSubtitleWindow,
+  getEmbeddedTextSubtitleWindow: getEmbeddedTextSubtitleWindow,
   prepareBitmapSubtitleSource: prepareBitmapSubtitleSource,
   clearBitmapSubtitleCaches: clearBitmapSubtitleCaches,
   _test: {
@@ -1456,6 +2042,14 @@ module.exports = {
     requestRange: requestRange,
     cancelRequestContext: cancelRequestContext,
     getBitmapSubtitleFormat: getBitmapSubtitleFormat,
+    isTextSubtitleTrack: isTextSubtitleTrack,
+    isAssTextSubtitleTrack: isAssTextSubtitleTrack,
+    normalizeTextSubtitlePayload: normalizeTextSubtitlePayload,
+    hasAssOverrideTags: hasAssOverrideTags,
+    hasAdvancedAssOverrideTags: hasAdvancedAssOverrideTags,
+    buildTextSubtitleWindowPayload: buildTextSubtitleWindowPayload,
+    buildAssSubtitleBody: buildAssSubtitleBody,
+    getTextCueEndMs: getTextCueEndMs,
     parsePgsSegments: parsePgsSegments,
     getPgsFrameSyncState: getPgsFrameSyncState,
     findLatestPgsSyncFrame: findLatestPgsSyncFrame,

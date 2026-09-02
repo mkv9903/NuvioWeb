@@ -1,5 +1,6 @@
 import { LocalStore } from "../../core/storage/localStore.js";
 import { ProfileManager } from "../../core/profile/profileManager.js";
+import { getSyncBackoffRemainingMs } from "../../core/sync/syncBackoffPolicy.js";
 
 const PROFILE_SCOPED_VERSION = 1;
 const PROFILES_KEY = "profiles";
@@ -62,7 +63,7 @@ function normalizeEnvelopeProfiles(profiles = {}, normalize) {
   return normalized;
 }
 
-function readEnvelope(key, normalize) {
+function readEnvelope(key, normalize, legacyProfileIds = null) {
   const raw = LocalStore.get(key, null);
   if (isProfileScopedEnvelope(raw)) {
     const next = {
@@ -79,7 +80,9 @@ function readEnvelope(key, normalize) {
     return createEmptyEnvelope();
   }
 
-  const profileIds = getKnownProfileIds();
+  const profileIds = Array.isArray(legacyProfileIds)
+    ? Array.from(new Set(legacyProfileIds.map((profileId) => normalizeProfileId(profileId))))
+    : getKnownProfileIds();
   const normalizedLegacy = normalize(cloneValue(raw) || {});
   const migrated = createEmptyEnvelope();
   profileIds.forEach((profileId) => {
@@ -101,14 +104,26 @@ function readPendingSettingsSyncProfiles() {
 export function markProfileSettingsCloudSyncPending(profileId = null) {
   const normalizedProfileId = normalizeProfileId(profileId);
   const pending = readPendingSettingsSyncProfiles();
-  pending[normalizedProfileId] = Date.now();
+  pending[normalizedProfileId] = Math.max(
+    Date.now(),
+    Number(pending[normalizedProfileId] || 0) + 1
+  );
   LocalStore.set(SETTINGS_SYNC_PENDING_KEY, pending);
 }
 
-export function clearProfileSettingsCloudSyncPending(profileId = null) {
+export function getProfileSettingsCloudSyncPendingVersion(profileId = null) {
+  const normalizedProfileId = normalizeProfileId(profileId);
+  const pending = readPendingSettingsSyncProfiles();
+  return pending[normalizedProfileId] == null ? null : pending[normalizedProfileId];
+}
+
+export function clearProfileSettingsCloudSyncPending(profileId = null, expectedVersion = null) {
   const normalizedProfileId = normalizeProfileId(profileId);
   const pending = readPendingSettingsSyncProfiles();
   if (!Object.prototype.hasOwnProperty.call(pending, normalizedProfileId)) {
+    return;
+  }
+  if (expectedVersion != null && pending[normalizedProfileId] !== expectedVersion) {
     return;
   }
   delete pending[normalizedProfileId];
@@ -121,14 +136,14 @@ export function hasProfileSettingsCloudSyncPending(profileId = null) {
   return Object.prototype.hasOwnProperty.call(pending, normalizedProfileId);
 }
 
-function ensureProfileValue(key, envelope, normalize, profileId) {
+function ensureProfileValue(key, envelope, normalize, profileId, seedFromPrimary = true) {
   const normalizedProfileId = normalizeProfileId(profileId);
   if (Object.prototype.hasOwnProperty.call(envelope.profiles, normalizedProfileId)) {
     return envelope.profiles[normalizedProfileId];
   }
 
   const primaryValue = envelope.profiles["1"];
-  const seed = primaryValue != null ? cloneValue(primaryValue) : normalize({});
+  const seed = seedFromPrimary && primaryValue != null ? cloneValue(primaryValue) : normalize({});
   envelope.profiles[normalizedProfileId] = normalize(seed || {});
   persistEnvelope(key, envelope);
   return envelope.profiles[normalizedProfileId];
@@ -164,14 +179,26 @@ export function queueProfileSettingsCloudSync(
           }
         });
       settingsSyncInFlightByProfile.set(normalizedProfileId, pushPromise);
-      await pushPromise;
+      const didPush = await pushPromise;
+      if (!didPush && hasProfileSettingsCloudSyncPending(normalizedProfileId)) {
+        const retryDelayMs = getSyncBackoffRemainingMs();
+        if (retryDelayMs > 0) {
+          queueProfileSettingsCloudSync(normalizedProfileId, Math.max(5000, retryDelayMs));
+        }
+      }
     };
     void runPush();
   }, delayMs);
   scheduledSettingsSyncTimers.set(normalizedProfileId, timerId);
 }
 
-export function createProfileScopedStore({ key, normalize, merge }) {
+export function createProfileScopedStore({
+  key,
+  normalize,
+  merge,
+  seedFromPrimary = true,
+  legacyProfileIds = null
+}) {
   const mergeValues =
     typeof merge === "function"
       ? merge
@@ -179,8 +206,8 @@ export function createProfileScopedStore({ key, normalize, merge }) {
 
   return {
     getForProfile(profileId) {
-      const envelope = readEnvelope(key, normalize);
-      return cloneValue(ensureProfileValue(key, envelope, normalize, profileId));
+      const envelope = readEnvelope(key, normalize, legacyProfileIds);
+      return cloneValue(ensureProfileValue(key, envelope, normalize, profileId, seedFromPrimary));
     },
 
     get() {
@@ -188,7 +215,7 @@ export function createProfileScopedStore({ key, normalize, merge }) {
     },
 
     replaceForProfile(profileId, nextValue, { silentSync = false } = {}) {
-      const envelope = readEnvelope(key, normalize);
+      const envelope = readEnvelope(key, normalize, legacyProfileIds);
       const normalizedProfileId = normalizeProfileId(profileId);
       envelope.profiles[normalizedProfileId] = normalize(cloneValue(nextValue) || {});
       persistEnvelope(key, envelope);
@@ -208,7 +235,7 @@ export function createProfileScopedStore({ key, normalize, merge }) {
     },
 
     clearProfile(profileId, { silentSync = false } = {}) {
-      const envelope = readEnvelope(key, normalize);
+      const envelope = readEnvelope(key, normalize, legacyProfileIds);
       const normalizedProfileId = normalizeProfileId(profileId);
       delete envelope.profiles[normalizedProfileId];
       persistEnvelope(key, envelope);

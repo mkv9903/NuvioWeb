@@ -35,6 +35,7 @@
     removeClass("no-flex-gap");
   }
 
+  if (supports("display", "grid")) removeClass("no-css-grid");
   if (supports("font-size", "clamp(1px, 2px, 3px)")) removeClass("no-css-math");
   if (supports("aspect-ratio", "1 / 1")) removeClass("no-aspect-ratio");
   if (
@@ -43,5 +44,4 @@
   ) {
     removeClass("no-backdrop-filter");
   }
-  if (supports("display", "grid")) removeClass("no-css-grid");
 })(window, document);

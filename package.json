@@ -1,12 +1,13 @@
 {
-  "name": "nuvio-tv-web",
+  "name": "nuvio-tv-smart",
   "private": true,
   "type": "module",
-  "version": "0.3.35",
+  "version": "1.0.4",
   "scripts": {
     "build": "node ./scripts/build.mjs",
+    "test": "npm run test:plugins",
+    "test:plugins": "npm run build && node ./tests/test-plugin-system.mjs && node ./tests/test-plugin-localization.mjs",
     "prepare": "husky || true",
-    "test": "node --test \"**/*.test.mjs\"",
     "build:on-release": "node ./scripts/release-build-poller.mjs",
     "install:webos": "node ./scripts/ares-install-webos.mjs",
     "inspect:webos": "node ./scripts/ares-inspect-webos.mjs",
@@ -15,14 +16,14 @@
     "lint": "npm run lint:home:incremental",
     "lint:home:incremental": "eslint \"js/ui/screens/home/**/*.js\" \"eslint.config.mjs\"",
     "package:tizen": "npm run build && node ./scripts/package-tizen.mjs",
+    "package:tizen:store": "npm run build && node ./scripts/package-tizen.mjs --store",
     "package:webos": "npm run build && node ./scripts/package-webos.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "serve": "node ./scripts/serve.mjs",
     "sync": "node ./scripts/sync-wrapper.mjs",
     "sync:tizen": "node ./scripts/sync-wrapper.mjs --tizen",
-    "sync:webos": "node ./scripts/sync-wrapper.mjs --webos",
-    "sync:tizenbrew": "node ./scripts/sync-tizenbrew.mjs"
+    "sync:webos": "node ./scripts/sync-wrapper.mjs --webos"
   },
   "devDependencies": {
     "@csstools/postcss-global-data": "^4.0.0",
@@ -44,9 +45,13 @@
     "flatted": "3.4.2"
   },
   "dependencies": {
+    "assjs": "0.1.10",
+    "cheerio": "^1.0.0",
+    "crypto-js": "^4.2.0",
     "dashjs": "4.7.4",
     "hls.js": "1.5.20",
     "jszip": "^3.10.1",
-    "libbitsub": "^1.10.1"
+    "libbitsub": "^1.10.1",
+    "quickjs-emscripten": "^0.32.0"
   }
 }

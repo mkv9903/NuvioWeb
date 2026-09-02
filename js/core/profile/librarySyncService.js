@@ -1,4 +1,5 @@
 import { AuthManager } from "../auth/authManager.js";
+import { isMissingResourceError, isSyncBackoffActive } from "../sync/syncBackoffPolicy.js";
 import { addonRepository } from "../../data/repository/addonRepository.js";
 import { SupabaseApi } from "../../data/remote/supabase/supabaseApi.js";
 import { ProfileManager } from "./profileManager.js";
@@ -17,25 +18,6 @@ function recordPullStatus(state, { count = 0, error = null } = {}) {
     error: error ? String(error.message || error) : null,
     at: Date.now()
   };
-}
-
-function isMissingResourceError(error) {
-  if (!error) {
-    return false;
-  }
-  if (error.status === 404) {
-    return true;
-  }
-  if (typeof error.code === "string" && (error.code === "PGRST205" || error.code === "PGRST202")) {
-    return true;
-  }
-  const message = String(error.message || "");
-  return (
-    message.includes("PGRST205") ||
-    message.includes("PGRST202") ||
-    message.includes("Could not find the table") ||
-    message.includes("Could not find the function")
-  );
 }
 
 function isOnConflictConstraintError(error) {
@@ -86,12 +68,6 @@ async function resolveAddonProfileId() {
   return usesPrimaryAddons ? 1 : profileId;
 }
 
-function extractAddonUrls(rows = []) {
-  return extractAddonEntries(rows)
-    .map((entry) => entry.url)
-    .filter(Boolean);
-}
-
 function extractAddonEntries(rows = []) {
   return (rows || [])
     .map((row) => ({
@@ -136,6 +112,10 @@ export const LibrarySyncService = {
   async pull() {
     let readError = null;
     try {
+      if (isSyncBackoffActive()) {
+        recordPullStatus("deferred");
+        return addonRepository.getInstalledAddonUrls();
+      }
       if (!AuthManager.isAuthenticated) {
         recordPullStatus("signed-out");
         return [];
@@ -159,6 +139,9 @@ export const LibrarySyncService = {
         addonTableMissing = isMissingResourceError(addonsTableError);
         if (!addonTableMissing) {
           readError = addonsTableError;
+          recordPullStatus("error", { count: localUrls.length, error: readError });
+          console.warn("Addon sync pull addons-table read failed", addonsTableError);
+          return localUrls;
         }
         console.warn("Addon sync pull addons-table read failed", addonsTableError);
       }
@@ -178,6 +161,9 @@ export const LibrarySyncService = {
         tvTableMissing = isMissingResourceError(tvTableError);
         if (!tvTableMissing) {
           readError = tvTableError;
+          recordPullStatus("error", { count: localUrls.length, error: readError });
+          console.warn("Addon sync pull tv-table read failed", tvTableError);
+          return localUrls;
         }
         console.warn("Addon sync pull tv-table read failed", tvTableError);
       }
@@ -216,6 +202,9 @@ export const LibrarySyncService = {
   },
 
   async push() {
+    if (isSyncBackoffActive()) {
+      return false;
+    }
     try {
       if (!AuthManager.isAuthenticated) {
         return false;
@@ -241,7 +230,10 @@ export const LibrarySyncService = {
         );
         return true;
       } catch (rpcError) {
-        console.warn("Addon sync push RPC failed, falling back to legacy table", rpcError);
+        if (!isMissingResourceError(rpcError)) {
+          throw rpcError;
+        }
+        console.warn("Addon sync push RPC is unavailable, falling back to legacy table", rpcError);
       }
 
       const ownerId = await AuthManager.getEffectiveUserId();

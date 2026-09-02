@@ -968,8 +968,11 @@ export class LibraryController {
     this.setState({ selectedCloudType: type, expandedPicker: null });
   }
 
-  setCloudSearchQuery(query) {
-    this.setState({ cloudSearchQuery: String(query || "") });
+  setCloudSearchQuery(query, options = {}) {
+    this.setState(
+      { cloudSearchQuery: String(query || "") },
+      { reason: options.reason || "cloudSearch" }
+    );
   }
 
   openCloudFilePicker(item) {
@@ -1269,6 +1272,9 @@ export class LibraryController {
   }
 
   async refreshNow() {
+    if (this.state.isSyncing) {
+      return false;
+    }
     const startedAt = Date.now();
     this.setState({ isSyncing: true, errorMessage: null });
     try {

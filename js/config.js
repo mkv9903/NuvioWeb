@@ -22,8 +22,10 @@ export const AVATAR_PUBLIC_BASE_URL = String(runtimeEnv.AVATAR_PUBLIC_BASE_URL |
 export const UNIQUE_CONTRIBUTIONS_BASE_URL = String(
   runtimeEnv.UNIQUE_CONTRIBUTIONS_BASE_URL || ""
 ).trim();
-export const DONATIONS_BASE_URL = String(runtimeEnv.DONATIONS_BASE_URL || "").trim();
-export const DONATIONS_DONATE_URL = String(runtimeEnv.DONATIONS_DONATE_URL || "").trim();
+export const SUPPORTERS_API_BASE_URL = String(
+  runtimeEnv.SUPPORTERS_API_BASE_URL || "https://nuvio.tv/"
+).trim();
+export const SUPPORT_URL = String(runtimeEnv.SUPPORT_URL || "https://nuvio.tv/support").trim();
 export const SPONSOR_NAMES = String(runtimeEnv.SPONSOR_NAMES || "").trim() || "ragmehos.";
 export const TMDB_API_KEY = String(runtimeEnv.TMDB_API_KEY || "").trim();
 export const TRAKT_CLIENT_ID = String(runtimeEnv.TRAKT_CLIENT_ID || "").trim();

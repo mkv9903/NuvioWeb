@@ -6,8 +6,12 @@ import { LocalStore } from "../../../core/storage/localStore.js";
 import { SessionStore } from "../../../core/storage/sessionStore.js";
 import { TmdbSettingsStore } from "../../../data/local/tmdbSettingsStore.js";
 import { HomeCatalogStore } from "../../../data/local/homeCatalogStore.js";
-import { ThemeStore } from "../../../data/local/themeStore.js";
+import { accentColorForTheme, ThemeStore } from "../../../data/local/themeStore.js";
+import { MemberAccessRepository } from "../../../data/remote/supabase/memberAccessRepository.js";
 import { ThemeManager } from "../../theme/themeManager.js";
+import { ThemeColors } from "../../theme/themeColors.js";
+import { availableThemeIds, resolveThemeName } from "../../theme/themeAccess.js";
+import { renderMemberBrandWordmark } from "../../components/memberBrandWordmark.js";
 import { PlayerSettingsStore } from "../../../data/local/playerSettingsStore.js";
 import {
   SUBTITLE_VERTICAL_OFFSET_DEFAULT,
@@ -15,6 +19,12 @@ import {
   SUBTITLE_VERTICAL_OFFSET_MIN,
   normalizeSubtitleVerticalOffset
 } from "../../../core/player/subtitleVerticalOffset.js";
+import {
+  SUBTITLE_TEXT_OPACITY_MAX,
+  SUBTITLE_TEXT_OPACITY_MIN,
+  SUBTITLE_TEXT_OPACITY_STEP,
+  normalizeSubtitleTextOpacity
+} from "../../../core/player/subtitleTextOpacity.js";
 import { TorrentSettingsStore } from "../../../data/local/torrentSettingsStore.js";
 import { WebOsAudioCompatibilityStore } from "../../../data/local/webOsAudioCompatibilityStore.js";
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
@@ -46,6 +56,7 @@ import { ProfileManager } from "../../../core/profile/profileManager.js";
 import { AuthManager } from "../../../core/auth/authManager.js";
 import { SupabaseApi } from "../../../data/remote/supabase/supabaseApi.js";
 import { Platform } from "../../../platform/index.js";
+import { TizenCapabilities } from "../../../platform/tizen/tizenCapabilities.js";
 import { isFastHorizontalNavigationEnabled } from "../../../platform/sharedKeys.js";
 import { CW_DISPLAY_SNAPSHOT_KEY, CW_ENRICHMENT_CACHE_KEY } from "../home/homeConstants.js";
 import { I18n } from "../../../i18n/index.js";
@@ -118,6 +129,36 @@ const STILL_WATCHING_THRESHOLD_OPTIONS = [2, 3, 4, 5, 6].map((value) => ({
 }));
 
 const THEME_OPTIONS = [
+  {
+    id: "GOLD",
+    labelKey: "settings.appearance.themes.gold",
+    color: "#e8a91c",
+    onColor: "#111111"
+  },
+  {
+    id: "JADE",
+    labelKey: "settings.appearance.themes.jade",
+    color: "#22d37c",
+    onColor: "#111111"
+  },
+  {
+    id: "ROSE_GOLD",
+    labelKey: "settings.appearance.themes.roseGold",
+    color: "#ec70a9",
+    onColor: "#111111"
+  },
+  {
+    id: "ARCTIC_BLUE",
+    labelKey: "settings.appearance.themes.arcticBlue",
+    color: "#3185f5",
+    onColor: "#ffffff"
+  },
+  {
+    id: "GRAPHITE",
+    labelKey: "settings.appearance.themes.graphite",
+    color: "#aab2be",
+    onColor: "#111111"
+  },
   {
     id: "WHITE",
     labelKey: "settings.appearance.themes.white",
@@ -437,6 +478,16 @@ const SUBTITLE_TEXT_COLOR_OPTIONS = [
   { id: "#00FF88", label: "Green" }
 ];
 
+const SUBTITLE_TEXT_OPACITY_OPTIONS = Array.from(
+  {
+    length: (SUBTITLE_TEXT_OPACITY_MAX - SUBTITLE_TEXT_OPACITY_MIN) / SUBTITLE_TEXT_OPACITY_STEP + 1
+  },
+  (_, index) => {
+    const value = SUBTITLE_TEXT_OPACITY_MIN + index * SUBTITLE_TEXT_OPACITY_STEP;
+    return { id: value, label: `${value}%` };
+  }
+);
+
 const SUBTITLE_OUTLINE_COLOR_OPTIONS = [
   { id: "#000000", label: "Black" },
   { id: "#FFFFFF", label: "White" },
@@ -457,6 +508,10 @@ function clampSubtitleSize(value) {
     return 120;
   }
   return Math.min(200, Math.max(50, parsed));
+}
+
+function clampSubtitleTextOpacity(value) {
+  return normalizeSubtitleTextOpacity(value);
 }
 
 function clampSubtitleOffset(value) {
@@ -1782,6 +1837,31 @@ function getSettingsSectionById(sectionId) {
   return SECTION_META.find((section) => section.id === sectionId) || null;
 }
 
+function isFirstStrongRtlText(value = "") {
+  for (const character of String(value || "")) {
+    const codePoint = character.codePointAt(0) || 0;
+    const isRtl =
+      (codePoint >= 0x0590 && codePoint <= 0x08ff) ||
+      (codePoint >= 0xfb1d && codePoint <= 0xfdff) ||
+      (codePoint >= 0xfe70 && codePoint <= 0xfeff);
+    if (isRtl) {
+      return true;
+    }
+    const isLtr =
+      (codePoint >= 0x0041 && codePoint <= 0x005a) ||
+      (codePoint >= 0x0061 && codePoint <= 0x007a) ||
+      (codePoint >= 0x00c0 && codePoint <= 0x02af) ||
+      (codePoint >= 0x0370 && codePoint <= 0x058f) ||
+      (codePoint >= 0x0900 && codePoint <= 0x1fff) ||
+      (codePoint >= 0x2e80 && codePoint <= 0xd7ff) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff);
+    if (isLtr) {
+      return false;
+    }
+  }
+  return false;
+}
+
 function updateSettingsMarqueeTargets(root) {
   root?.querySelectorAll?.(".settings-nav-label").forEach((label) => {
     label._settingsMarqueeAnimation?.cancel?.();
@@ -1792,6 +1872,8 @@ function updateSettingsMarqueeTargets(root) {
     const originalText = label.dataset.marqueeText || String(label.textContent || "");
     label.dataset.marqueeText = originalText;
     label.textContent = originalText;
+    const textIsRtl = isFirstStrongRtlText(originalText);
+    label.setAttribute("dir", textIsRtl ? "rtl" : "ltr");
 
     const item = label.closest(".settings-nav-item");
     if (!item?.classList.contains("focused")) {
@@ -1812,7 +1894,10 @@ function updateSettingsMarqueeTargets(root) {
     label.classList.add("is-marquee-active");
     if (typeof label.animate === "function") {
       label._settingsMarqueeAnimation = label.animate(
-        [{ transform: "translateX(0)" }, { transform: `translateX(-${distance}px)` }],
+        [
+          { transform: "translateX(0)" },
+          { transform: `translateX(${textIsRtl ? distance : -distance}px)` }
+        ],
         {
           duration: travelMs,
           iterations: Infinity,
@@ -2144,6 +2229,18 @@ export const SettingsScreen = {
     this.sidebarProfile = sidebarProfile;
     this.model = initialModel;
     await this.render({ refreshModel: false });
+    this.isMounted = true;
+    this.memberAccessUnsubscribe = MemberAccessRepository.subscribe((access) => {
+      if (!this.isMounted || !this.model) return;
+      const previous = this.model.memberAccess || {};
+      if (
+        String(previous.tier || "") === String(access?.tier || "") &&
+        JSON.stringify(previous.entitlements || []) === JSON.stringify(access?.entitlements || [])
+      ) {
+        return;
+      }
+      void this.render({ refreshModel: true });
+    });
   },
 
   ensureExpandedState(sectionId) {
@@ -2177,7 +2274,7 @@ export const SettingsScreen = {
   },
 
   getAppearanceThemeFocusKey() {
-    return this.appearanceThemeFocusKey || `appearance:theme:${THEME_OPTIONS[0]?.id || "WHITE"}`;
+    return this.appearanceThemeFocusKey || "appearance:theme:WHITE";
   },
 
   collapseExpandedSection(sectionId) {
@@ -2213,12 +2310,17 @@ export const SettingsScreen = {
   async collectModel() {
     const authState = AuthManager.getAuthState();
     this.ensureAccountSyncOverview(authState);
-    const [addons, profiles] = await Promise.all([
+    const [addons, profiles, memberAccess] = await Promise.all([
       addonRepository.getInstalledAddons(),
-      ProfileManager.getProfiles()
+      ProfileManager.getProfiles(),
+      MemberAccessRepository.getAccess().catch(() => MemberAccessRepository.getCurrentAccess())
     ]);
     const activeProfileId = ProfileManager.getActiveProfileId();
     const pluginSources = PluginManager.listPluginSources();
+    const pluginSummary = PluginManager.getSummary();
+    const storedTheme = ThemeStore.get();
+    const resolvedThemeName = resolveThemeName(storedTheme.themeName, memberAccess);
+    ThemeManager.apply({ enforceAccess: true, access: memberAccess });
 
     return {
       addons,
@@ -2226,8 +2328,14 @@ export const SettingsScreen = {
       activeProfileId,
       accountEmail: getSessionEmail(),
       pluginSources,
+      pluginSummary,
       pluginsEnabled: PluginManager.pluginsEnabled,
-      theme: ThemeStore.get(),
+      theme: {
+        ...storedTheme,
+        themeName: resolvedThemeName,
+        accentColor: accentColorForTheme(resolvedThemeName)
+      },
+      memberAccess,
       player: PlayerSettingsStore.get(),
       webOsAudioCompatibility: Platform.isWebOS()
         ? WebOsAudioCompatibilityStore.get({
@@ -2312,7 +2420,6 @@ export const SettingsScreen = {
           ${renderSectionNavIcon(item.id)}
           <span class="settings-nav-label-wrap">
             <span class="settings-nav-label">${escapeHtml(translateSectionCopy(item).label)}</span>
-            ${item.id === "plugins" ? `<span class="settings-nav-badge">${escapeHtml(t("common.soon", {}, "Soon"))}</span>` : ""}
           </span>
         </span>
         ${iconSvg(ROW_ICONS.chevron, "settings-nav-chevron")}
@@ -2359,6 +2466,7 @@ export const SettingsScreen = {
     return `
       <button class="settings-action-row settings-content-focusable focusable${classes ? ` ${classes}` : ""}${inert ? " is-disabled" : ""}${planned ? " is-planned" : ""}"
               data-zone="content"
+              aria-disabled="${inert ? "true" : "false"}"
               ${this.registerAction(focusKey, inert ? () => {} : this.actionMap.get(focusKey))}
               data-role="action">
         ${leadingIconSrc ? `<img class="settings-row-leading-image" src="${escapeHtml(leadingIconSrc)}" alt="" aria-hidden="true">` : leadingIcon ? `<span class="settings-row-leading-icon material-icons" aria-hidden="true">${escapeHtml(leadingIcon)}</span>` : ""}
@@ -2383,6 +2491,7 @@ export const SettingsScreen = {
     return `
       <button class="settings-action-row settings-toggle-row settings-content-focusable focusable${inert ? " is-disabled" : ""}${planned ? " is-planned" : ""}"
               data-zone="content"
+              aria-disabled="${inert ? "true" : "false"}"
               ${this.registerAction(focusKey, inert ? () => {} : this.actionMap.get(focusKey))}
               data-role="toggle">
         <span class="settings-row-copy">
@@ -2402,12 +2511,13 @@ export const SettingsScreen = {
   renderThemeCard(theme, selected, focusKey) {
     const selectedClass = selected ? " is-selected" : "";
     const swatchClass = theme.id === "WHITE" ? " settings-theme-swatch-light" : "";
+    const swatchBackground = ThemeColors.getPalette(theme.id)["--accent-gradient"] || theme.color;
     return `
       <button class="settings-theme-card settings-content-focusable focusable${selectedClass}"
               data-zone="content"
               ${this.registerAction(focusKey, this.actionMap.get(focusKey))}>
         <span class="settings-theme-swatch-wrap">
-          <span class="settings-theme-swatch${swatchClass}" style="background:${escapeHtml(theme.color)};">
+          <span class="settings-theme-swatch${swatchClass}" style="background:${escapeHtml(swatchBackground)};">
             ${selected ? `<span class="settings-theme-check-wrap" style="color:${escapeHtml(theme.onColor || "#fff")};">${iconSvg(ROW_ICONS.check, "settings-theme-check")}</span>` : ""}
           </span>
         </span>
@@ -2421,7 +2531,6 @@ export const SettingsScreen = {
       <button class="settings-layout-card settings-content-focusable focusable${selected ? " is-selected" : ""}"
               data-zone="content"
               ${this.registerAction(focusKey, this.actionMap.get(focusKey))}>
-        <span class="settings-layout-badge">${escapeHtml(t("common.beta", {}, "Beta"))}</span>
         ${renderLayoutPreviewPlaceholderMarkup()}
         <span class="settings-layout-preview settings-layout-preview-${escapeHtml(option.id)}">${renderLayoutPreviewMarkup(option.id)}</span>
         <span class="settings-layout-name">${escapeHtml(translateOptionLabel(option))}</span>
@@ -3217,9 +3326,6 @@ export const SettingsScreen = {
         })
       );
     }
-    this.actionMap.set("profiles:rememberLast", () => {
-      ProfileManager.setRememberLastProfileEnabled(!ProfileManager.isRememberLastProfileEnabled());
-    });
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "profiles"))}
       <div class="settings-group-card settings-profile-card">
@@ -3235,16 +3341,6 @@ export const SettingsScreen = {
                 })
               : ""
           }
-          ${this.renderToggleRow({
-            focusKey: "profiles:rememberLast",
-            title: t("settings.profiles.rememberLast.title", {}, "Remember Last Profile"),
-            subtitle: t(
-              "settings.profiles.rememberLast.subtitle",
-              {},
-              "Skip the profile picker at startup and use the last selected profile. Profiles with a PIN are always asked."
-            ),
-            checked: ProfileManager.isRememberLastProfileEnabled()
-          })}
         </div>
       </div>
     `;
@@ -3255,6 +3351,9 @@ export const SettingsScreen = {
       LayoutPreferences.set({
         fastHorizontalNavigationEnabled: !isFastHorizontalNavigationEnabled()
       });
+    });
+    this.actionMap.set("advanced:rememberLastProfile", () => {
+      ProfileManager.setRememberLastProfileEnabled(!ProfileManager.isRememberLastProfileEnabled());
     });
     const isEssential = model.experience?.mode === "ESSENTIAL";
     this.actionMap.set("advanced:switchExperience", () => {
@@ -3341,6 +3440,16 @@ export const SettingsScreen = {
             ),
             checked: Boolean(model.fastHorizontalNavigation)
           })}
+          ${this.renderToggleRow({
+            focusKey: "advanced:rememberLastProfile",
+            title: t("advanced_remember_last_profile", {}, "Remember Last Profile"),
+            subtitle: t(
+              "advanced_remember_last_profile_subtitle",
+              {},
+              "Remember last selected profile at startup"
+            ),
+            checked: ProfileManager.isRememberLastProfileEnabled()
+          })}
         </div>
       </div>
       <div class="settings-group-heading">
@@ -3367,10 +3476,12 @@ export const SettingsScreen = {
   },
 
   renderAppearanceSection(model) {
-    THEME_OPTIONS.forEach((theme) => {
+    const availableIds = new Set(availableThemeIds(model?.memberAccess));
+    const themeOptions = THEME_OPTIONS.filter((theme) => availableIds.has(theme.id));
+    themeOptions.forEach((theme) => {
       this.actionMap.set(`appearance:theme:${theme.id}`, () => {
         ThemeStore.set({ themeName: theme.id, accentColor: theme.color });
-        ThemeManager.apply();
+        ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
       });
     });
 
@@ -3383,7 +3494,7 @@ export const SettingsScreen = {
         dialogClassName: "settings-appearance-dialog",
         onSelect: (option) => {
           ThemeStore.set({ fontFamily: option.id });
-          ThemeManager.apply();
+          ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
         }
       });
     });
@@ -3398,7 +3509,7 @@ export const SettingsScreen = {
         onSelect: async (option) => {
           ThemeStore.set({ language: option.id });
           await I18n.init();
-          ThemeManager.apply();
+          ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
           I18n.apply();
         }
       });
@@ -3409,11 +3520,11 @@ export const SettingsScreen = {
         amoledMode: nextAmoled,
         amoledSurfacesMode: nextAmoled ? Boolean(ThemeStore.get().amoledSurfacesMode) : false
       });
-      ThemeManager.apply();
+      ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
     });
     this.actionMap.set("appearance:amoledSurfaces", () => {
       ThemeStore.set({ amoledSurfacesMode: !ThemeStore.get().amoledSurfacesMode });
-      ThemeManager.apply();
+      ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
     });
     this.actionMap.set("appearance:settingsUiStyle", () => {
       const options = ["CLASSIC", "HORIZON", "ZEN"].map((id) => ({
@@ -3438,13 +3549,15 @@ export const SettingsScreen = {
         </div>
         <div class="settings-horizontal-scroll-frame">
           <div class="settings-theme-row">
-            ${THEME_OPTIONS.map((theme) =>
-              this.renderThemeCard(
-                theme,
-                String(model.theme.themeName).toUpperCase() === theme.id,
-                `appearance:theme:${theme.id}`
+            ${themeOptions
+              .map((theme) =>
+                this.renderThemeCard(
+                  theme,
+                  String(model.theme.themeName).toUpperCase() === theme.id,
+                  `appearance:theme:${theme.id}`
+                )
               )
-            ).join("")}
+              .join("")}
           </div>
           ${settingsScrollIndicatorMarkup("horizontal")}
         </div>
@@ -3602,6 +3715,11 @@ export const SettingsScreen = {
         onSelect: (option) => LayoutPreferences.set({ continueWatchingCardStyle: option.id })
       })
     );
+    this.actionMap.set("layout:continueWatchingEnabled", () => {
+      LayoutPreferences.set({
+        continueWatchingEnabled: !LayoutPreferences.get().continueWatchingEnabled
+      });
+    });
     const openNumberSetting = (focusKey, titleKey, field, values, fallback) =>
       this.actionMap.set(focusKey, () =>
         this.openOptionDialog({
@@ -3711,6 +3829,12 @@ export const SettingsScreen = {
         }
       });
     });
+    this.actionMap.set("layout:homeImdbRatings", () => {
+      const current = LayoutPreferences.get().homeImdbRatingsVisibility;
+      LayoutPreferences.set({
+        homeImdbRatingsVisibility: current === "HIDE_ALL" ? "SHOW_ALL" : "HIDE_ALL"
+      });
+    });
     this.actionMap.set("layout:posterLabels", () => {
       LayoutPreferences.set({ posterLabelsEnabled: !LayoutPreferences.get().posterLabelsEnabled });
     });
@@ -3810,6 +3934,7 @@ export const SettingsScreen = {
         : continueWatchingSortMode === "streaming_style"
           ? t("settings.layout.continueWatchingSort.streamingStyle", {}, "Streaming Style")
           : t("settings.layout.continueWatchingSort.default", {}, "Default");
+    const homeRatingsShown = model.layout.homeImdbRatingsVisibility !== "HIDE_ALL";
 
     const homeLayoutBody = `
       <div class="settings-stack">
@@ -3963,11 +4088,24 @@ export const SettingsScreen = {
           subtitle: t("settings.layout.hideUnreleased.subtitle"),
           checked: Boolean(model.layout.hideUnreleasedContent)
         })}
+        ${this.renderToggleRow({
+          focusKey: "layout:homeImdbRatings",
+          title: t("layout_overall_ratings", {}, "Overall Ratings"),
+          subtitle: homeRatingsShown
+            ? t("layout_overall_ratings_sub_on", {}, "Standard and TMDB ratings are shown.")
+            : t(
+                "layout_overall_ratings_sub_off",
+                {},
+                "Standard and TMDB ratings are Hidden. MDBList provider settings take priority on detail pages."
+              ),
+          checked: homeRatingsShown
+        })}
       </div>
     `;
 
-    const continueWatchingBody = `
-      <div class="settings-stack">
+    const continueWatchingEnabled = model.layout.continueWatchingEnabled !== false;
+    const continueWatchingOptionsBody = continueWatchingEnabled
+      ? `
         ${this.renderActionRow({ focusKey: "layout:continueWatchingCardStyle", title: t("layout_cw_card_style", {}, "Card style"), subtitle: t("layout_section_continue_watching_desc", {}, "Choose the Continue Watching card shape"), value: t(`layout_cw_card_style_${model.layout.continueWatchingCardStyle || "card"}`, {}, model.layout.continueWatchingCardStyle || "card") })}
         ${this.renderToggleRow({
           focusKey: "layout:useEpisodeThumbnailsInCw",
@@ -4027,6 +4165,22 @@ export const SettingsScreen = {
           ),
           value: continueWatchingSortLabel
         })}
+      `
+      : "";
+
+    const continueWatchingBody = `
+      <div class="settings-stack">
+        ${this.renderToggleRow({
+          focusKey: "layout:continueWatchingEnabled",
+          title: t("settings.layout.continueWatchingEnabled.title", {}, "Show Continue Watching"),
+          subtitle: t(
+            "settings.layout.continueWatchingEnabled.subtitle",
+            {},
+            "Show Continue Watching and Upcoming rows on Home."
+          ),
+          checked: continueWatchingEnabled
+        })}
+        ${continueWatchingOptionsBody}
       </div>
     `;
 
@@ -4204,12 +4358,37 @@ export const SettingsScreen = {
     `;
   },
 
-  renderPluginsSection() {
+  renderPluginsSection(model = {}) {
+    const summary = model.pluginSummary || PluginManager.getSummary();
+    const runtime = summary.runtime || {};
+    this.actionMap.set("plugins:open", async () => {
+      await Router.navigate("plugins");
+    });
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "plugins"))}
-      <div class="settings-group-card settings-group-card-fill">
-        <div class="settings-empty-state settings-empty-state-plugins">
-          <p class="settings-plugin-soon-text">Plugin support is coming soon.</p>
+      <div class="settings-group-card">
+        <div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "plugins:open",
+            title: t("plugin_title", {}, "Plugins"),
+            subtitle: t(
+              "settings.plugins.openSubtitle",
+              {},
+              "Manage executable Nuvio JS providers and preserved external metadata"
+            ),
+            value: `${Number(summary.repositories?.length || 0)} · ${Number(summary.scrapers?.length || 0)}`,
+            icon: "chevron"
+          })}
+          <div class="settings-subsection-card">
+            <div class="settings-group-heading">
+              <div>
+                <div class="settings-group-title">${escapeHtml(t("plugin_runtime_heading", {}, "TV plugin runtime"))}</div>
+                <div class="settings-group-subtitle">${escapeHtml(runtime.executable ? t("plugin_runtime_ready", {}, "Runtime ready") : runtime.reason || t("plugin_runtime_unsupported", {}, "Execution unavailable on this TV runtime"))}</div>
+              </div>
+              <span class="settings-row-value">${escapeHtml(t("plugin_providers_count", { count: Number(summary.scrapers?.length || 0) }, `${Number(summary.scrapers?.length || 0)} providers`))}</span>
+            </div>
+          </div>
+          <p class="settings-row-subtitle">${escapeHtml(t("plugin_runtime_tv_only", {}, "Only Nuvio JS repositories execute. CloudStream DEX and legacy URL-template sources are retained for display but never executed or converted."))}</p>
         </div>
       </div>
     `;
@@ -5509,6 +5688,10 @@ export const SettingsScreen = {
     this.ensureExpandedState("playback");
     const expanded = this.expandedSections.playback;
     const torrentSettings = model.torrent || TorrentSettingsStore.get();
+    const tizenP2pUnsupported = TizenCapabilities.isP2pUnsupported();
+    const p2pUnavailableSubtitle = tizenP2pUnsupported
+      ? t("settings_p2p_unsupported_subtitle", {}, "Not supported on this TV.")
+      : t("settings_p2p_subtitle");
 
     this.actionMap.set("playback:toggle:general", () => {
       this.toggleExpandedSection("playback", "general");
@@ -5585,6 +5768,7 @@ export const SettingsScreen = {
       );
     togglePlayerSetting("playback:loadingOverlay", "loadingOverlayEnabled");
     togglePlayerSetting("playback:loadingStatus", "showPlayerLoadingStatus");
+    togglePlayerSetting("playback:minimalBufferingUi", "minimalBufferingUiEnabled");
     togglePlayerSetting("playback:pauseOverlay", "pauseOverlayEnabled");
     togglePlayerSetting("playback:parentalGuide", "parentalGuideEnabled");
     ["intro", "recap", "outro"].forEach((type) =>
@@ -5739,10 +5923,12 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:autoStreamPlugins", () => {
-      const options = PluginManager.listPluginSources()
-        .filter((source) => source?.enabled !== false)
-        .map((source) => String(source?.name || "").trim())
+      const options = (PluginManager.pluginsEnabled ? PluginManager.listScrapers() : [])
+        .filter((scraper) => scraper?.type === "NUVIO_JS" && scraper?.enabled !== false)
+        .map((scraper) => String(scraper?.name || "").trim())
         .filter(Boolean)
+        .filter((name, index, names) => names.indexOf(name) === index)
+        .sort((left, right) => left.localeCompare(right))
         .map((name) => ({ id: name, label: name }));
       this.openMultiChoiceDialog({
         title: t("autoplay_allowed_plugins", {}, "Allowed Plugins"),
@@ -5926,6 +6112,17 @@ export const SettingsScreen = {
         }
       });
     });
+    this.actionMap.set("playback:subtitleTextOpacity", () => {
+      this.openOptionDialog({
+        title: t("subtitle_style_text_opacity", {}, "Text Opacity"),
+        options: SUBTITLE_TEXT_OPACITY_OPTIONS,
+        selectedId: clampSubtitleTextOpacity(PlayerSettingsStore.get().subtitleStyle?.textOpacity),
+        returnFocusKey: "playback:subtitleTextOpacity",
+        onSelect: (option) => {
+          updateSubtitleStyle({ textOpacity: clampSubtitleTextOpacity(option.id) });
+        }
+      });
+    });
     this.actionMap.set("playback:subtitleBackgroundColor", () =>
       this.openOptionDialog({
         title: t("sub_bg_color", {}, "Subtitle background color"),
@@ -5960,6 +6157,9 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:p2pEnabled", () => {
+      if (TizenCapabilities.isP2pUnsupported()) {
+        return;
+      }
       const current = TorrentSettingsStore.get();
       if (current.p2pEnabled) {
         TorrentSettingsStore.setP2pEnabled(false);
@@ -5984,6 +6184,9 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:hideTorrentStats", () => {
+      if (TizenCapabilities.isP2pUnsupported()) {
+        return;
+      }
       TorrentSettingsStore.setHideTorrentStats(!TorrentSettingsStore.get().hideTorrentStats);
     });
 
@@ -6030,12 +6233,11 @@ export const SettingsScreen = {
           ${this.renderToggleRow({
             focusKey: "playback:p2pEnabled",
             title: t("essential_p2p_streams", {}, "P2P streams"),
-            subtitle: t(
-              "essential_p2p_streams_subtitle",
-              {},
-              "Allow peer-to-peer stream playback."
-            ),
-            checked: Boolean(torrentSettings.p2pEnabled)
+            subtitle: tizenP2pUnsupported
+              ? p2pUnavailableSubtitle
+              : t("essential_p2p_streams_subtitle", {}, "Allow peer-to-peer stream playback."),
+            checked: tizenP2pUnsupported ? false : Boolean(torrentSettings.p2pEnabled),
+            disabled: tizenP2pUnsupported
           })}
         </div></div>
         <div class="settings-group-heading"><div class="settings-group-title">${escapeHtml(t("essential_subtitles_and_audio", {}, "Subtitles & audio"))}</div></div>
@@ -6117,6 +6319,7 @@ export const SettingsScreen = {
         })}
         ${this.renderToggleRow({ focusKey: "playback:loadingOverlay", title: t("playback_loading_overlay"), subtitle: t("playback_loading_overlay_sub"), checked: model.player.loadingOverlayEnabled !== false })}
         ${this.renderToggleRow({ focusKey: "playback:loadingStatus", title: t("playback_show_loading_status", {}, "Detailed loading status"), subtitle: t("playback_show_loading_status_sub", {}, "Show detailed player loading progress"), checked: model.player.showPlayerLoadingStatus !== false })}
+        ${Platform.isWebOS() ? this.renderToggleRow({ focusKey: "playback:minimalBufferingUi", title: t("playback_minimal_buffering_ui", {}, "Minimal buffering UI"), subtitle: t("playback_minimal_buffering_ui_sub", {}, "Show only the spinner when playback buffers after it has started"), checked: Boolean(model.player.minimalBufferingUiEnabled) }) : ""}
         ${this.renderToggleRow({ focusKey: "playback:pauseOverlay", title: t("playback_pause_overlay"), subtitle: t("playback_pause_overlay_sub"), checked: model.player.pauseOverlayEnabled !== false })}
         ${this.renderToggleRow({ focusKey: "playback:parentalGuide", title: t("playback_parental_guide"), subtitle: t("playback_parental_guide_sub"), checked: model.player.parentalGuideEnabled !== false })}
         ${["intro", "recap", "outro"].map((type) => this.renderToggleRow({ focusKey: `playback:autoSkip:${type}`, title: t(`auto_skip_${type}`, {}, `Auto-skip ${type}`), subtitle: t(`auto_skip_${type}_sub`, {}, `Skip ${type} segments automatically`), checked: model.player.autoSkipSegmentTypes?.includes(type) })).join("")}
@@ -6472,6 +6675,16 @@ export const SettingsScreen = {
             normalizeSubtitleStyleHex(model.player.subtitleStyle?.textColor, "#FFFFFF")
           )
         })}
+        ${this.renderActionRow({
+          focusKey: "playback:subtitleTextOpacity",
+          title: t("subtitle_style_text_opacity", {}, "Text Opacity"),
+          subtitle: "Opacity applied to subtitle text independently of its color and background.",
+          value: labelForOptionId(
+            SUBTITLE_TEXT_OPACITY_OPTIONS,
+            clampSubtitleTextOpacity(model.player.subtitleStyle?.textOpacity),
+            `${clampSubtitleTextOpacity(model.player.subtitleStyle?.textOpacity)}%`
+          )
+        })}
         ${this.renderActionRow({ focusKey: "playback:subtitleBackgroundColor", title: t("sub_bg_color", {}, "Subtitle background color"), subtitle: t("sub_bg_color", {}, "Background behind subtitle text"), value: String(model.player.subtitleStyle?.backgroundColor || "#00000000") })}
         ${this.renderToggleRow({
           focusKey: "playback:subtitleOutline",
@@ -6515,14 +6728,18 @@ export const SettingsScreen = {
         ${this.renderToggleRow({
           focusKey: "playback:p2pEnabled",
           title: t("settings_p2p_title"),
-          subtitle: t("settings_p2p_subtitle"),
-          checked: Boolean(torrentSettings.p2pEnabled)
+          subtitle: p2pUnavailableSubtitle,
+          checked: tizenP2pUnsupported ? false : Boolean(torrentSettings.p2pEnabled),
+          disabled: tizenP2pUnsupported
         })}
         ${this.renderToggleRow({
           focusKey: "playback:hideTorrentStats",
           title: t("settings_p2p_hide_stats_title"),
-          subtitle: t("settings_p2p_hide_stats_subtitle"),
-          checked: Boolean(torrentSettings.hideTorrentStats)
+          subtitle: tizenP2pUnsupported
+            ? p2pUnavailableSubtitle
+            : t("settings_p2p_hide_stats_subtitle"),
+          checked: tizenP2pUnsupported ? false : Boolean(torrentSettings.hideTorrentStats),
+          disabled: tizenP2pUnsupported
         })}
       </div>
     `;
@@ -7005,7 +7222,7 @@ export const SettingsScreen = {
     `;
   },
 
-  renderAboutSection() {
+  renderAboutSection(model = this.model) {
     this.actionMap.set("about:privacy", () => {
       window.open?.(PRIVACY_URL, "_blank");
     });
@@ -7018,7 +7235,7 @@ export const SettingsScreen = {
         const update = await getLatestAppUpdate({ currentVersion: CURRENT_APP_VERSION });
         this.aboutUpdateStatus = update
           ? String(update.tag || "")
-          : t("update_up_to_date", {}, "System is up to date.");
+          : t("update_latest_version", {}, "You’re using the latest version.");
         if (update) showAppUpdatePrompt(update);
       } catch (_) {
         this.aboutUpdateStatus = t("update_error_check_failed", {}, "Update check failed");
@@ -7031,7 +7248,11 @@ export const SettingsScreen = {
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "about"))}
       <div class="settings-group-card settings-group-card-fill">
         <div class="settings-about-brand">
-          <img class="settings-about-logo" src="assets/brand/app_logo_wordmark.png" alt="Nuvio" />
+          ${renderMemberBrandWordmark({
+            access: model?.memberAccess,
+            imageClass: "settings-about-logo",
+            wrapperClass: "settings-about-wordmark"
+          })}
           <p class="settings-about-copy">${t("settings.about.madeWithLove")}</p>
           <p class="settings-about-copy">${t("settings.about.version", { version: SETTINGS_VERSION_LABEL })}</p>
           <p class="settings-about-copy">${t("settings.about.portedBy")}</p>
@@ -7081,7 +7302,7 @@ export const SettingsScreen = {
     if (section.id === "appearance") return this.renderAppearanceSection(model);
     if (section.id === "layout") return this.renderLayoutSection(model);
     if (section.id === "contentDiscovery") return this.renderContentDiscoverySection();
-    if (section.id === "plugins") return this.renderPluginsSection();
+    if (section.id === "plugins") return this.renderPluginsSection(model);
     if (section.id === "integration") return this.renderIntegrationSection(model);
     if (section.id === "streams") return this.renderStreamsSection(model);
     if (section.id === "playback") return this.renderPlaybackSection(model);
@@ -7895,6 +8116,9 @@ export const SettingsScreen = {
   },
 
   cleanup() {
+    this.isMounted = false;
+    this.memberAccessUnsubscribe?.();
+    this.memberAccessUnsubscribe = null;
     this.persistUiState();
     this.stopTraktPolling?.();
     this.stopDebridDeviceAuth();

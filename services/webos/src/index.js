@@ -11,6 +11,7 @@ var requestActiveServerPath = serverHost.requestActiveServerPath;
 var SUPABASE_PROXY_PATH = require("./supabaseProxy").SUPABASE_PROXY_PATH;
 var bitmapSubtitles = require("./bitmapSubtitles");
 var getBitmapSubtitleWindow = bitmapSubtitles.getBitmapSubtitleWindow;
+var getEmbeddedTextSubtitleWindow = bitmapSubtitles.getEmbeddedTextSubtitleWindow;
 var prepareBitmapSubtitleSource = bitmapSubtitles.prepareBitmapSubtitleSource;
 
 var RUNTIME_PATH = path.resolve(__dirname, "..", "runtime", "media-http.cjs");
@@ -142,6 +143,12 @@ function registerCommand(commandName, includeBody) {
 
 function registerSafeHttpProxyCommand(commandName) {
   service.register(commandName, function (message) {
+    ensureRuntimeStarted();
+    if (runtimeState.error) {
+      respond(message, buildErrorPayload(runtimeState.error));
+      return;
+    }
+
     var payload = getMessagePayload(message);
     var proxyRequest = {
       url: payload.url,
@@ -158,7 +165,8 @@ function registerSafeHttpProxyCommand(commandName) {
         },
         body: JSON.stringify(proxyRequest),
         timeoutMs: 20000,
-        maxBodyBytes: 10 * 1024 * 1024
+        maxBodyBytes: 10 * 1024 * 1024,
+        encoding: null
       },
       function (error, result) {
         if (error) {
@@ -177,7 +185,13 @@ function registerSafeHttpProxyCommand(commandName) {
             supabaseProxy: true,
             statusCode: result ? result.statusCode || 0 : 0,
             headers: result ? result.headers || {} : {},
-            body: result ? result.body || "" : ""
+            body:
+              result && Buffer.isBuffer(result.body)
+                ? result.body.toString("base64")
+                : result
+                  ? result.body || ""
+                  : "",
+            bodyEncoding: result && Buffer.isBuffer(result.body) ? "base64" : "utf8"
           })
         );
       }
@@ -406,6 +420,35 @@ function registerBitmapSubtitleCommand() {
           buildErrorPayload(error, {
             bitmapSubtitle: true,
             errorCode: String((error && error.code) || "BITMAP_SUBTITLE_FAILED"),
+            errorDetails: (error && error.details) || null
+          })
+        );
+      });
+  });
+}
+
+function registerEmbeddedTextSubtitleCommand() {
+  service.register("embeddedSubtitleTextWindow", function (message) {
+    var payload = getMessagePayload(message);
+    getEmbeddedTextSubtitleWindow({
+      url: payload.url,
+      trackNumber: payload.trackNumber,
+      startSeconds: payload.startSeconds,
+      endSeconds: payload.endSeconds,
+      includeAssBody: payload.includeAssBody
+    })
+      .then(function (result) {
+        respond(message, Object.assign(buildBasePayload(), result, { returnValue: true }));
+      })
+      .catch(function (error) {
+        if (!error || error.code !== "REQUEST_SUPERSEDED") {
+          console.error("[" + SERVICE_ID + "] embedded text subtitle extraction failed:", error);
+        }
+        respond(
+          message,
+          buildErrorPayload(error, {
+            embeddedTextSubtitle: true,
+            errorCode: String((error && error.code) || "EMBEDDED_TEXT_SUBTITLE_FAILED"),
             errorDetails: (error && error.details) || null
           })
         );
@@ -1383,7 +1426,10 @@ function registerEngineFsDiagnosticCommand() {
   });
 }
 
-ensureRuntimeStarted();
+// Register the Luna methods before loading the heavyweight media runtime. The
+// runtime performs EngineFS and hardware capability setup during require(); if
+// that work happens first, LS2 can report this service as not running while
+// the process is still booting on slower TVs.
 registerCommand("ping", false);
 registerCommand("status", true);
 registerSafeHttpProxyCommand("supabaseProxy");
@@ -1392,5 +1438,6 @@ registerEngineFsKeepAliveCommands();
 registerTracksCommand();
 registerSubtitleTextCommand();
 registerBitmapSubtitleCommand();
+registerEmbeddedTextSubtitleCommand();
 registerTorrentProxyCommands();
 registerEngineFsDiagnosticCommand();

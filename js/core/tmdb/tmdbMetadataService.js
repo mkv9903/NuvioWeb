@@ -3,6 +3,7 @@ import {
   TmdbSettingsStore
 } from "../../data/local/tmdbSettingsStore.js";
 import { TMDB_API_KEY } from "../../config.js";
+import { tmdbShowReleaseInfo, tmdbYearPart } from "../util/tmdbReleaseRange.js";
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_SIZES = {
@@ -11,9 +12,22 @@ const TMDB_IMAGE_SIZES = {
   backdrop: "w1280",
   logo: "w300",
   // Match Android TV: episode cards are wider than 300px on the TV layout.
-  still: "w500"
+  still: "w500",
+  // Entity browse cards and logos follow the Android TMDB screen sizes.
+  entityPoster: "w500",
+  entityBackdrop: "w780",
+  entityLogo: "w500"
 };
 const TMDB_TRAILER_FALLBACK_LANGUAGE = "en-US";
+const ENTITY_RAIL_MAX_ITEMS = 20;
+const TOP_RATED_VOTE_COUNT_FLOOR = 200;
+const ENTITY_RAIL_TYPES = ["popular", "top_rated", "recent"];
+const TMDB_ENGLISH_CREDIT_LANGUAGE = "en-US";
+const NATIVE_PERSON_NAME_LANGUAGES = new Set(["ja", "ko", "zh"]);
+const TMDB_RECOMMENDATION_MAX_ITEMS = 12;
+const entityHeaderCache = new Map();
+const entityRailCache = new Map();
+const entityBrowseCache = new Map();
 
 function resolveType(contentType) {
   const normalized = String(contentType || "").toLowerCase();
@@ -21,6 +35,147 @@ function resolveType(contentType) {
     return "tv";
   }
   return "movie";
+}
+
+function languageBase(language = "") {
+  return normalizeTmdbLanguageCode(language).split("-", 1)[0].toLowerCase();
+}
+
+export function containsCjkOrHangul(text = "") {
+  for (const character of String(text || "")) {
+    const codePoint = character.codePointAt(0) || 0;
+    if (
+      (codePoint >= 0x1100 && codePoint <= 0x11ff) ||
+      (codePoint >= 0x2e80 && codePoint <= 0x2fff) ||
+      (codePoint >= 0x3040 && codePoint <= 0x30ff) ||
+      (codePoint >= 0x3130 && codePoint <= 0x318f) ||
+      (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
+      (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7af) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xa960 && codePoint <= 0xa97f) ||
+      (codePoint >= 0xd7b0 && codePoint <= 0xd7ff)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function resolvePersonName({
+  localizedName = "",
+  originalName = "",
+  fallbackEnglishName = "",
+  preferredLanguage = "en"
+} = {}) {
+  const name = String(localizedName || "").trim();
+  const original = String(originalName || "").trim();
+  const fallback = String(fallbackEnglishName || "").trim();
+  const language = languageBase(preferredLanguage);
+
+  if (!name) {
+    return original || fallback || null;
+  }
+  if (NATIVE_PERSON_NAME_LANGUAGES.has(language)) {
+    return name;
+  }
+  if (!containsCjkOrHangul(name)) {
+    return name;
+  }
+  if (original && !containsCjkOrHangul(original)) {
+    return original;
+  }
+  if (fallback && !containsCjkOrHangul(fallback)) {
+    return fallback;
+  }
+  return fallback || original || name;
+}
+
+function needsEnglishPersonNameFallback(data = {}, language = "en") {
+  const normalizedLanguage = languageBase(language);
+  if (!normalizedLanguage || normalizedLanguage === "en") {
+    return false;
+  }
+  if (NATIVE_PERSON_NAME_LANGUAGES.has(normalizedLanguage)) {
+    return false;
+  }
+
+  const people = [
+    ...(Array.isArray(data?.credits?.cast) ? data.credits.cast : []),
+    ...(Array.isArray(data?.credits?.crew) ? data.credits.crew : []),
+    ...(Array.isArray(data?.created_by) ? data.created_by : [])
+  ];
+  return people.some((person) => {
+    const name = String(person?.name || "").trim();
+    const original = String(person?.original_name || "").trim();
+    return Boolean(
+      name && containsCjkOrHangul(name) && (!original || containsCjkOrHangul(original))
+    );
+  });
+}
+
+function addEnglishPersonNames(target, people = []) {
+  (Array.isArray(people) ? people : []).forEach((person) => {
+    const id = String(person?.id || "").trim();
+    const name = String(person?.name || "").trim();
+    if (id && name) {
+      target.set(id, name);
+    }
+  });
+}
+
+async function fetchEnglishPersonNames({ type, tmdbId, apiKey, data, language } = {}) {
+  if (!needsEnglishPersonNameFallback(data, language)) {
+    return new Map();
+  }
+
+  try {
+    const params = `api_key=${encodeURIComponent(apiKey)}&language=${encodeURIComponent(TMDB_ENGLISH_CREDIT_LANGUAGE)}&append_to_response=credits`;
+    const url = `${TMDB_BASE_URL}/${type}/${encodeURIComponent(String(tmdbId))}?${params}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      return new Map();
+    }
+    const englishData = await response.json();
+    const names = new Map();
+    addEnglishPersonNames(names, englishData?.credits?.cast);
+    addEnglishPersonNames(names, englishData?.credits?.crew);
+    addEnglishPersonNames(names, englishData?.created_by);
+    return names;
+  } catch (error) {
+    console.warn("TMDB English person-name fallback failed", error);
+    return new Map();
+  }
+}
+
+function resolveCreditEntries(items, englishNames, language) {
+  if (!Array.isArray(items)) {
+    return items;
+  }
+  return items.map((item) => {
+    const name = resolvePersonName({
+      localizedName: item?.name,
+      originalName: item?.original_name,
+      fallbackEnglishName: englishNames.get(String(item?.id || "")),
+      preferredLanguage: language
+    });
+    return name && name !== item?.name ? { ...item, name } : item;
+  });
+}
+
+function resolveCredits(credits, englishNames, language) {
+  if (!credits || typeof credits !== "object") {
+    return credits || null;
+  }
+  return {
+    ...credits,
+    ...(Array.isArray(credits.cast)
+      ? { cast: resolveCreditEntries(credits.cast, englishNames, language) }
+      : {}),
+    ...(Array.isArray(credits.crew)
+      ? { crew: resolveCreditEntries(credits.crew, englishNames, language) }
+      : {})
+  };
 }
 
 function toImageUrl(path, kind = "backdrop") {
@@ -126,8 +281,16 @@ function parsePublishedAtEpoch(value = "") {
   return Number.isFinite(parsed) ? parsed : Number.MIN_SAFE_INTEGER;
 }
 
-function rankTmdbVideoCandidates(results = []) {
-  return (Array.isArray(results) ? results : [])
+function rankTmdbVideoCandidates(
+  results = [],
+  preferredLanguageCode = TMDB_TRAILER_FALLBACK_LANGUAGE
+) {
+  const preferredLanguage = String(preferredLanguageCode || TMDB_TRAILER_FALLBACK_LANGUAGE)
+    .split("-")[0]
+    .trim()
+    .toLowerCase();
+  const seenKeys = new Set();
+  const candidates = (Array.isArray(results) ? results : [])
     .filter((entry) => String(entry?.site || "").toLowerCase() === "youtube")
     .filter((entry) => Boolean(String(entry?.key || "").trim()))
     .filter((entry) => {
@@ -136,15 +299,39 @@ function rankTmdbVideoCandidates(results = []) {
         .toLowerCase();
       return normalizedType === "trailer" || normalizedType === "teaser";
     })
-    .sort((left, right) => {
-      const typeDiff = videoTypePriority(left?.type) - videoTypePriority(right?.type);
-      if (typeDiff !== 0) return typeDiff;
-      const officialDiff = Number(Boolean(right?.official)) - Number(Boolean(left?.official));
-      if (officialDiff !== 0) return officialDiff;
-      const sizeDiff = Number(right?.size || 0) - Number(left?.size || 0);
-      if (sizeDiff !== 0) return sizeDiff;
-      return parsePublishedAtEpoch(right?.published_at) - parsePublishedAtEpoch(left?.published_at);
+    .filter((entry) => {
+      const key = String(entry?.key || "").trim();
+      if (seenKeys.has(key)) {
+        return false;
+      }
+      seenKeys.add(key);
+      return true;
     });
+
+  const languageRank = (entry) => {
+    const language = String(entry?.iso_639_1 || "")
+      .trim()
+      .toLowerCase();
+    if (language === preferredLanguage) {
+      return 0;
+    }
+    if (language === "en") {
+      return 1;
+    }
+    return 2;
+  };
+
+  return candidates.sort((left, right) => {
+    const typeDiff = videoTypePriority(left?.type) - videoTypePriority(right?.type);
+    if (typeDiff !== 0) return typeDiff;
+    const languageDiff = languageRank(left) - languageRank(right);
+    if (languageDiff !== 0) return languageDiff;
+    const officialDiff = Number(Boolean(right?.official)) - Number(Boolean(left?.official));
+    if (officialDiff !== 0) return officialDiff;
+    const sizeDiff = Number(right?.size || 0) - Number(left?.size || 0);
+    if (sizeDiff !== 0) return sizeDiff;
+    return parsePublishedAtEpoch(right?.published_at) - parsePublishedAtEpoch(left?.published_at);
+  });
 }
 
 async function fetchTmdbVideos({ type, tmdbId, apiKey, language }) {
@@ -159,7 +346,7 @@ async function fetchTmdbVideos({ type, tmdbId, apiKey, language }) {
 
 async function resolveTrailerCandidates({ type, tmdbId, apiKey, language, initialResults = [] }) {
   const preferredLanguage = normalizeTmdbTrailerLanguage(language);
-  const preferred = rankTmdbVideoCandidates(initialResults);
+  const preferred = rankTmdbVideoCandidates(initialResults, preferredLanguage);
   if (preferred.length || preferredLanguage === TMDB_TRAILER_FALLBACK_LANGUAGE) {
     return preferred;
   }
@@ -169,7 +356,38 @@ async function resolveTrailerCandidates({ type, tmdbId, apiKey, language, initia
     apiKey,
     language: TMDB_TRAILER_FALLBACK_LANGUAGE
   });
-  return rankTmdbVideoCandidates(fallback);
+  return rankTmdbVideoCandidates(fallback, TMDB_TRAILER_FALLBACK_LANGUAGE);
+}
+
+async function fetchTmdbShowDetails({ tmdbId, apiKey, language }) {
+  const url = `${TMDB_BASE_URL}/tv/${encodeURIComponent(String(tmdbId))}?api_key=${encodeURIComponent(apiKey)}&language=${encodeURIComponent(language)}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function resolveRecommendationReleaseInfo(item, { type, apiKey, language }) {
+  if (type !== "tv") {
+    return String(item?.release_date || "").slice(0, 4) || "";
+  }
+
+  const startYear = tmdbYearPart(item?.first_air_date);
+  if (startYear == null) {
+    return "";
+  }
+
+  const details = await fetchTmdbShowDetails({
+    tmdbId: item?.id,
+    apiKey,
+    language
+  });
+  return tmdbShowReleaseInfo(item?.first_air_date, details?.last_air_date, details?.status) || "";
 }
 
 function mapTrailerCandidates(items = []) {
@@ -192,10 +410,15 @@ function mapTrailerCandidates(items = []) {
 
 function mapCompanies(items = []) {
   return (Array.isArray(items) ? items : [])
-    .map((company) => ({
-      name: company?.name || "",
-      logo: toImageUrl(company?.logo_path || company?.logo || null, "logo")
-    }))
+    .map((company) => {
+      const rawId = company?.id ?? company?.tmdbId ?? company?.tmdb_id ?? null;
+      const numericId = Number(rawId);
+      return {
+        name: company?.name || "",
+        logo: toImageUrl(company?.logo_path || company?.logo || null, "logo"),
+        tmdbId: Number.isInteger(numericId) && numericId > 0 ? numericId : null
+      };
+    })
     .filter((company) => company.name || company.logo);
 }
 
@@ -219,6 +442,87 @@ function selectAgeRating(data = {}, type = "movie") {
   return certification || null;
 }
 
+function normalizeEntityKind(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase() === "network"
+    ? "network"
+    : "company";
+}
+
+function normalizeEntityId(value) {
+  const normalized = String(value ?? "").trim();
+  return /^\d+$/.test(normalized) && Number(normalized) > 0 ? normalized : "";
+}
+
+function normalizeEntitySourceType(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "movie" ? "movie" : "tv";
+}
+
+function buildEntityMediaOrder(entityKind, sourceType) {
+  if (entityKind === "network") {
+    return ["tv"];
+  }
+  return normalizeEntitySourceType(sourceType) === "movie" ? ["movie", "tv"] : ["tv", "movie"];
+}
+
+function entitySortBy(mediaType, railType) {
+  if (railType === "top_rated") {
+    return "vote_average.desc";
+  }
+  if (railType === "recent") {
+    return mediaType === "tv" ? "first_air_date.desc" : "primary_release_date.desc";
+  }
+  return "popularity.desc";
+}
+
+function mapEntityDiscoverResult(result = {}, mediaType = "movie") {
+  const title =
+    result?.title || result?.name || result?.original_title || result?.original_name || "";
+  const numericId = Number(result?.id);
+  if (!title || !Number.isInteger(numericId) || numericId <= 0) {
+    return null;
+  }
+
+  const poster =
+    toImageUrl(result?.poster_path || null, "entityPoster") ||
+    toImageUrl(result?.backdrop_path || null, "entityBackdrop");
+  if (!poster) {
+    return null;
+  }
+
+  const releaseDate = mediaType === "tv" ? result?.first_air_date : result?.release_date;
+  const background = toImageUrl(result?.backdrop_path || null, "backdrop");
+  const rating = Number(result?.vote_average);
+  return {
+    id: `tmdb:${numericId}`,
+    type: mediaType === "tv" ? "series" : "movie",
+    name: title,
+    poster,
+    background,
+    backdrop: background,
+    landscapePoster: background,
+    description: result?.overview || "",
+    releaseInfo: String(releaseDate || "").slice(0, 4),
+    tmdbRating: Number.isFinite(rating) ? Number(rating.toFixed(1)) : null
+  };
+}
+
+function fallbackEntityHeader(entityKind, entityId, fallbackName = "") {
+  return {
+    id: Number(entityId),
+    kind: entityKind,
+    name: String(fallbackName || "").trim() || "Unknown",
+    logo: null,
+    originCountry: null,
+    secondaryLabel: null,
+    description: null
+  };
+}
+
 export const TmdbMetadataService = {
   async fetchEnrichment({ tmdbId, contentType, language = null } = {}) {
     const settings = TmdbSettingsStore.get();
@@ -239,10 +543,18 @@ export const TmdbMetadataService = {
     }
 
     const data = await response.json();
+    const englishPersonNames = await fetchEnglishPersonNames({
+      type,
+      tmdbId,
+      apiKey,
+      data,
+      language: lang
+    });
+    const resolvedCredits = resolveCredits(data?.credits, englishPersonNames, lang);
     const logoPath = selectBestLocalizedLogoPath(data?.images?.logos, lang);
-    const releaseYear =
+    const releaseInfoValue =
       type === "tv"
-        ? String(data.first_air_date || "").slice(0, 4)
+        ? tmdbShowReleaseInfo(data.first_air_date, data.last_air_date, data.status)
         : String(data.release_date || "").slice(0, 4);
     const companies = mapCompanies(data?.production_companies);
     const networks = mapCompanies(data?.networks);
@@ -279,7 +591,7 @@ export const TmdbMetadataService = {
         ? data.genres.map((genre) => genre.name).filter(Boolean)
         : [],
       rating: typeof data.vote_average === "number" ? data.vote_average : null,
-      releaseInfo: releaseYear || null,
+      releaseInfo: releaseInfoValue || null,
       released: type === "tv" ? data.first_air_date || null : data.release_date || null,
       runtime: Number.isFinite(runtimeValue) && runtimeValue > 0 ? `${runtimeValue} min` : null,
       status: data?.status || null,
@@ -288,7 +600,7 @@ export const TmdbMetadataService = {
       language: spokenLanguage?.iso_639_1 || spokenLanguage?.english_name || null,
       originalLanguage: data?.original_language || null,
       imdbId: data?.external_ids?.imdb_id || null,
-      credits: data.credits || null,
+      credits: resolvedCredits,
       companies,
       productionCompanies: companies,
       networks,
@@ -297,6 +609,186 @@ export const TmdbMetadataService = {
       collectionId: data?.belongs_to_collection?.id ? String(data.belongs_to_collection.id) : null,
       collectionName: data?.belongs_to_collection?.name || null
     };
+  },
+
+  async fetchEntityBrowse({
+    entityKind,
+    entityId,
+    sourceType,
+    fallbackName = "",
+    language = null
+  } = {}) {
+    const apiKey = String(TMDB_API_KEY || "").trim();
+    const normalizedId = normalizeEntityId(entityId);
+    if (!apiKey || !normalizedId) {
+      return null;
+    }
+
+    const kind = normalizeEntityKind(entityKind);
+    const source = normalizeEntitySourceType(sourceType);
+    const settings = TmdbSettingsStore.get();
+    const lang = normalizeTmdbLanguageCode(language || settings.language);
+    const cacheKey = `${kind}:${normalizedId}:${source}:${lang}`;
+    if (entityBrowseCache.has(cacheKey)) {
+      return entityBrowseCache.get(cacheKey);
+    }
+
+    const header = await this.fetchEntityHeader({
+      entityKind: kind,
+      entityId: normalizedId,
+      fallbackName,
+      apiKey
+    });
+    const rails = [];
+    for (const mediaType of buildEntityMediaOrder(kind, source)) {
+      for (const railType of ENTITY_RAIL_TYPES) {
+        const pageResult = await this.fetchEntityRailPage({
+          entityKind: kind,
+          entityId: normalizedId,
+          mediaType,
+          railType,
+          language: lang,
+          apiKey,
+          page: 1
+        });
+        if (!pageResult.items.length) {
+          continue;
+        }
+        rails.push({
+          key: `${mediaType}:${railType}`,
+          mediaType,
+          railType,
+          items: pageResult.items,
+          currentPage: 1,
+          hasMore: pageResult.hasMore,
+          isLoading: false
+        });
+      }
+    }
+
+    if (!header && !rails.length) {
+      return null;
+    }
+
+    const data = {
+      header: header || fallbackEntityHeader(kind, normalizedId, fallbackName),
+      rails
+    };
+    entityBrowseCache.set(cacheKey, data);
+    return data;
+  },
+
+  async fetchEntityHeader({ entityKind, entityId, fallbackName = "", apiKey } = {}) {
+    const kind = normalizeEntityKind(entityKind);
+    const normalizedId = normalizeEntityId(entityId);
+    const key = `${kind}:${normalizedId}:header`;
+    if (entityHeaderCache.has(key)) {
+      return entityHeaderCache.get(key);
+    }
+
+    const fallback = String(fallbackName || "").trim();
+    try {
+      const url = `${TMDB_BASE_URL}/${kind}/${encodeURIComponent(normalizedId)}?api_key=${encodeURIComponent(apiKey || TMDB_API_KEY)}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        const originCountry = Array.isArray(data?.origin_country)
+          ? data.origin_country.filter(Boolean).join(", ")
+          : String(data?.origin_country || "").trim();
+        const header = {
+          id: Number(data?.id || normalizedId),
+          kind,
+          name: String(data?.name || fallback || "Unknown").trim() || "Unknown",
+          logo: toImageUrl(data?.logo_path || data?.logo || null, "entityLogo"),
+          originCountry: originCountry || null,
+          secondaryLabel: String(data?.headquarters || "").trim() || null,
+          description: kind === "company" ? String(data?.description || "").trim() || null : null
+        };
+        entityHeaderCache.set(key, header);
+        return header;
+      }
+    } catch (error) {
+      console.warn("TMDB entity header load failed", error);
+    }
+
+    if (fallback) {
+      const fallbackHeader = fallbackEntityHeader(kind, normalizedId, fallback);
+      entityHeaderCache.set(key, fallbackHeader);
+      return fallbackHeader;
+    }
+    return null;
+  },
+
+  async fetchEntityRailPage({
+    entityKind,
+    entityId,
+    mediaType,
+    railType,
+    language = null,
+    apiKey,
+    page = 1
+  } = {}) {
+    const kind = normalizeEntityKind(entityKind);
+    const normalizedId = normalizeEntityId(entityId);
+    const normalizedMediaType = mediaType === "tv" ? "tv" : "movie";
+    const normalizedRailType = ENTITY_RAIL_TYPES.includes(railType) ? railType : "popular";
+    const normalizedPage = Math.max(1, Number(page) || 1);
+    if (!normalizedId || (kind === "network" && normalizedMediaType === "movie")) {
+      return { items: [], hasMore: false };
+    }
+
+    const settings = TmdbSettingsStore.get();
+    const lang = normalizeTmdbLanguageCode(language || settings.language);
+    const key = `${kind}:${normalizedId}:${normalizedMediaType}:${normalizedRailType}:${lang}:${normalizedPage}`;
+    if (entityRailCache.has(key)) {
+      return entityRailCache.get(key);
+    }
+
+    const params = new URLSearchParams({
+      api_key: String(apiKey || TMDB_API_KEY || ""),
+      language: lang,
+      page: String(normalizedPage),
+      sort_by: entitySortBy(normalizedMediaType, normalizedRailType)
+    });
+    if (kind === "company") {
+      params.set("with_companies", normalizedId);
+    } else {
+      params.set("with_networks", normalizedId);
+      params.set("with_status", "0|3|4");
+    }
+
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (normalizedMediaType === "tv" && (normalizedRailType === "recent" || kind === "network")) {
+      params.set("first_air_date.lte", today);
+    } else if (normalizedRailType === "recent") {
+      params.set("primary_release_date.lte", today);
+    }
+    if (normalizedRailType === "top_rated") {
+      params.set("vote_count.gte", String(TOP_RATED_VOTE_COUNT_FLOOR));
+    }
+
+    const result = { items: [], hasMore: false };
+    try {
+      const response = await fetch(`${TMDB_BASE_URL}/discover/${normalizedMediaType}?${params}`);
+      if (!response.ok) {
+        return result;
+      }
+      const data = await response.json();
+      const items = (Array.isArray(data?.results) ? data.results : [])
+        .map((item) => mapEntityDiscoverResult(item, normalizedMediaType))
+        .filter(Boolean)
+        .slice(0, ENTITY_RAIL_MAX_ITEMS);
+      result.items = items;
+      result.hasMore =
+        normalizedPage < Number(data?.total_pages || normalizedPage) && items.length > 0;
+    } catch (error) {
+      console.warn("TMDB entity rail load failed", error);
+    }
+    if (result.items.length) {
+      entityRailCache.set(key, result);
+    }
+    return result;
   },
 
   async fetchSeasonRatings({ tmdbId, seasonNumber, language = null } = {}) {
@@ -412,8 +904,11 @@ export const TmdbMetadataService = {
       return [];
     }
     const data = await response.json();
-    return (Array.isArray(data?.results) ? data.results : [])
-      .map((item) => ({
+    const recommendationResults = (Array.isArray(data?.results) ? data.results : [])
+      .filter((item) => Number(item?.id) > 0)
+      .slice(0, TMDB_RECOMMENDATION_MAX_ITEMS);
+    const items = await Promise.all(
+      recommendationResults.map(async (item) => ({
         id: item?.id ? `tmdb:${String(item.id)}` : "",
         type: type === "tv" ? "series" : "movie",
         name: item?.title || item?.name || "Untitled",
@@ -422,14 +917,15 @@ export const TmdbMetadataService = {
         backdrop: toImageUrl(item?.backdrop_path || null, "backdrop"),
         landscapePoster: toImageUrl(item?.backdrop_path || null, "backdrop"),
         description: item?.overview || "",
-        releaseInfo:
-          String(type === "tv" ? item?.first_air_date || "" : item?.release_date || "").slice(
-            0,
-            4
-          ) || "",
+        releaseInfo: await resolveRecommendationReleaseInfo(item, {
+          type,
+          apiKey,
+          language: lang
+        }),
         tmdbRating:
           typeof item?.vote_average === "number" ? Number(item.vote_average.toFixed(1)) : null
       }))
-      .filter((item) => item.id);
+    );
+    return items.filter((item) => item.id);
   }
 };

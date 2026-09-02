@@ -7,7 +7,17 @@ const HAS_EVER_SELECTED_PROFILE_KEY = "hasEverSelectedProfile";
 export const MAX_PROFILES = 6;
 
 const DEFAULT_PROFILES = [
-  { id: "1", profileIndex: 1, name: "Profile 1", avatarColorHex: "#1E88E5", isPrimary: true }
+  {
+    id: "1",
+    profileIndex: 1,
+    name: "Profile 1",
+    avatarColorHex: "#1E88E5",
+    avatarId: null,
+    avatarUrl: null,
+    profileBackgroundId: null,
+    profileBackgroundUrl: null,
+    isPrimary: true
+  }
 ];
 
 function normalizeProfile(profile, index = 0) {
@@ -24,6 +34,10 @@ function normalizeProfile(profile, index = 0) {
     avatarColorHex: String(profile?.avatarColorHex || "#1E88E5"),
     avatarId: profile?.avatarId || profile?.avatar_id || null,
     avatarUrl: String(profile?.avatarUrl || profile?.avatar_url || "").trim() || null,
+    profileBackgroundId:
+      String(profile?.profileBackgroundId || profile?.profile_background_id || "").trim() || null,
+    profileBackgroundUrl:
+      String(profile?.profileBackgroundUrl || profile?.profile_background_url || "").trim() || null,
     isPrimary: Boolean(profile?.isPrimary || normalizedIndex === 1),
     usesPrimaryAddons: Boolean(profile?.usesPrimaryAddons),
     usesPrimaryPlugins: Boolean(profile?.usesPrimaryPlugins)
@@ -99,6 +113,8 @@ export const ProfileManager = {
     avatarColorHex = "#1E88E5",
     avatarId = null,
     avatarUrl = null,
+    profileBackgroundId = null,
+    profileBackgroundUrl = null,
     usesPrimaryAddons = false,
     usesPrimaryPlugins = false
   } = {}) {
@@ -126,6 +142,8 @@ export const ProfileManager = {
           avatarColorHex,
           avatarId,
           avatarUrl,
+          profileBackgroundId,
+          profileBackgroundUrl,
           isPrimary: false,
           usesPrimaryAddons,
           usesPrimaryPlugins

@@ -37,6 +37,11 @@
           "public": true
         },
         {
+          "name": "embeddedSubtitleTextWindow",
+          "description": "Extract a bounded VTT/ASS window from an embedded Matroska text subtitle track",
+          "public": true
+        },
+        {
           "name": "torrentCreate",
           "description": "Create an EngineFS torrent stream on the local media runtime",
           "public": true

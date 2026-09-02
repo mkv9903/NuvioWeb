@@ -37,10 +37,14 @@
       typeof existing.UNIQUE_CONTRIBUTIONS_BASE_URL === "undefined"
         ? ""
         : existing.UNIQUE_CONTRIBUTIONS_BASE_URL,
-    DONATIONS_BASE_URL:
-      typeof existing.DONATIONS_BASE_URL === "undefined" ? "" : existing.DONATIONS_BASE_URL,
-    DONATIONS_DONATE_URL:
-      typeof existing.DONATIONS_DONATE_URL === "undefined" ? "" : existing.DONATIONS_DONATE_URL,
+    SUPPORTERS_API_BASE_URL:
+      typeof existing.SUPPORTERS_API_BASE_URL === "undefined"
+        ? "https://nuvio.tv/"
+        : existing.SUPPORTERS_API_BASE_URL,
+    SUPPORT_URL:
+      typeof existing.SUPPORT_URL === "undefined"
+        ? "https://nuvio.tv/support"
+        : existing.SUPPORT_URL,
     SPONSOR_NAMES:
       typeof existing.SPONSOR_NAMES === "undefined" || !String(existing.SPONSOR_NAMES).trim()
         ? "ragmehos."

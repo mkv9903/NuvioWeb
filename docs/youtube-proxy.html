@@ -293,13 +293,32 @@
             '<iframe id="yt" src="' +
             src +
             '" frameborder="0" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>';
+          var directFrame = document.getElementById("yt");
+          if (directFrame) {
+            directFrame.addEventListener(
+              "load",
+              function onDirectEmbedLoad() {
+                postToParent("state", {
+                  state: {
+                    currentTime: 0,
+                    duration: 0,
+                    paused: false,
+                    muted: startMuted,
+                    loading: false,
+                    controllable: false
+                  }
+                });
+              },
+              { once: true }
+            );
+          }
           postToParent("state", {
             state: {
               currentTime: 0,
               duration: 0,
-              paused: false,
+              paused: true,
               muted: startMuted,
-              loading: false,
+              loading: true,
               controllable: false
             }
           });

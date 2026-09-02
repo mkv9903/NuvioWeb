@@ -4,6 +4,7 @@ import { LocalStore } from "../../../core/storage/localStore.js";
 import { ScreenUtils } from "../../navigation/screen.js";
 import { AuthManager } from "../../../core/auth/authManager.js";
 import { I18n } from "../../../i18n/index.js";
+import { renderBrandWordmarkImage } from "../../components/brandWordmark.js";
 
 let pollInterval = null;
 let countdownInterval = null;
@@ -25,7 +26,7 @@ export const AuthQrSignInScreen = {
       <div class="qr-layout">
         <section class="qr-left-panel">
           <div class="qr-brand-lockup">
-            <img src="assets/brand/app_logo_wordmark.png" class="qr-logo" alt="Nuvio" />
+            ${renderBrandWordmarkImage({ className: "qr-logo" })}
           </div>
 
           <div class="qr-copy-block">
@@ -267,7 +268,7 @@ export const AuthQrSignInScreen = {
     this.startQr();
   },
 
-  handleContinueAction() {
+  async handleContinueAction() {
     if (this.isLeaving) {
       return;
     }
@@ -276,6 +277,7 @@ export const AuthQrSignInScreen = {
     LocalStore.set("hasSeenAuthQrOnFirstLaunch", true);
     if (!this.isSignedIn) {
       LocalStore.set(GUEST_QR_BYPASS_KEY, true);
+      await AuthManager.signOut();
     } else {
       LocalStore.remove(GUEST_QR_BYPASS_KEY);
     }

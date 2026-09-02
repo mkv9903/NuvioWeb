@@ -6,6 +6,10 @@ nuvio.env.js
 local.properties
 local.example.properties
 node_modules/
+<<<<<<< HEAD
+=======
+tests/
+>>>>>>> main
 *.ipk
 *.wgt
 dist/
