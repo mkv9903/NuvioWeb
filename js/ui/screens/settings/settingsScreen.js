@@ -6920,13 +6920,13 @@ export const SettingsScreen = {
             expanded: Boolean(expanded.subtitles),
             bodyHtml: subtitleBody
           })}
-          ${this.renderCollapsibleRow({
+          ${!Platform.isWebOS() ? this.renderCollapsibleRow({
             focusKey: "playback:toggle:p2p",
             title: t("settings_p2p_title"),
             subtitle: t("settings_p2p_subtitle"),
             expanded: Boolean(expanded.p2p),
             bodyHtml: p2pBody
-          })}
+          }) : ""}
         </div>
       </div>
     `;

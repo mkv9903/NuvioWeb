@@ -8,7 +8,7 @@ function waitBeforeRecoveryRetry() {
 }
 
 export function isWebOsCompanionServiceAvailable() {
-  return WebOsLunaService.isAvailable();
+  return false;
 }
 
 export function getWebOsCompanionServiceIds() {

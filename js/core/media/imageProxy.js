@@ -147,7 +147,12 @@ export function ensureWebOsImageProxyReady({ force = false } = {}) {
 
 export function proxifyImageUrl(value = "", options = {}) {
   const normalized = String(value || "").trim();
-  if (!normalized || !Environment.isWebOS() || !isProxyableImgurImageUrl(normalized)) {
+  if (
+    !normalized ||
+    !Environment.isWebOS() ||
+    !isWebOsCompanionServiceAvailable() ||
+    !isProxyableImgurImageUrl(normalized)
+  ) {
     return normalized;
   }
   if (!webOsImageProxyReady) {

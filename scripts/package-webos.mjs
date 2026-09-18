@@ -168,7 +168,7 @@ function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
   <script src="boot-guard.js"></script>
   <script src="core-js.bundle.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
   <script>window.__NUVIO_PLATFORM__ = "webos";</script>
-  <script>window.__NUVIO_WEBOS_PLUGIN_SERVICE_ENABLED__ = true; window.__NUVIO_WEBOS_PLUGIN_SERVICE_ID__ = "${webOsPluginServiceId}";</script>
+  <script>window.__NUVIO_WEBOS_PLUGIN_SERVICE_ENABLED__ = false; window.__NUVIO_WEBOS_PLUGIN_SERVICE_ID__ = "";</script>
   <script src="nuvio.env.js"></script>
   <script src="assets/libs/qrcode-generator.js"></script>
 ${webOsScriptTag}  <script>
@@ -191,7 +191,7 @@ async function stageApp() {
   appInfo.version = version;
   appInfo.icon = "icon.png";
   appInfo.largeIcon = "largeIcon.png";
-  appInfo.services = [webOsServiceId, webOsPluginServiceId];
+  delete appInfo.services;
   validateWebOsAppInfo(appInfo);
   await writeFile(appInfoPath, `${JSON.stringify(appInfo, null, 2)}\n`, "utf8");
 
@@ -311,14 +311,12 @@ async function packageWebOs() {
   console.log("staging webOS package files...");
   await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
-  await Promise.all([stageApp(), stageService(), stagePluginService()]);
+  await stageApp();
 
   console.log("creating webOS IPK...");
   try {
     await runWebOsToolsBinary("ares-package", [
       appStageDir,
-      serviceStageDir,
-      pluginServiceStageDir,
       "--outdir",
       rootDir
     ]);
