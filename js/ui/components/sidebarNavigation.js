@@ -533,13 +533,11 @@ export function bindRootSidebarEvents(
       const keyCode = Number(event?.keyCode || 0);
       if (keyCode === 38) {
         event?.preventDefault?.();
-        event?.stopPropagation?.();
         moveSidebarFocus(node, -1);
         return;
       }
       if (keyCode === 40) {
         event?.preventDefault?.();
-        event?.stopPropagation?.();
         moveSidebarFocus(node, 1);
       }
     };

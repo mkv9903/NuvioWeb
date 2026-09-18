@@ -7621,6 +7621,10 @@ export const SettingsScreen = {
 
     if (this.focusZone === "sidebar") {
       const sidebarNodes = getRootSidebarNodes(this.container, this.layoutPrefs);
+      const activeIndex = sidebarNodes.indexOf(document.activeElement);
+      if (activeIndex !== -1) {
+        this.sidebarFocusIndex = activeIndex;
+      }
       const sidebarNode =
         sidebarNodes[this.sidebarFocusIndex] ||
         getRootSidebarSelectedNode(this.container, this.layoutPrefs);

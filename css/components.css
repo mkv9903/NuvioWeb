@@ -24616,6 +24616,15 @@ html.tizen-tv.no-css-math .plugins-route-shell {
 
 /* Tizen 4 uses Chromium M56, which does not implement CSS Grid. Keep the
    Android TV structures usable through flex fallbacks on that runtime only. */
+html.no-css-grid .settings-root-sidebar-slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 100%;
+  overflow: visible;
+}
+
 html.no-css-grid .settings-workspace {
   display: flex;
   flex-flow: row nowrap;
