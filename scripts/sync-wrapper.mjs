@@ -382,19 +382,35 @@ async function syncTizenIcon(targetDir) {
 async function updateWebOsMetadata(targetDir) {
   const { version: appVersion } = await readAppMetadata();
   const appInfoPath = path.join(targetDir, "appinfo.json");
-  const appInfoRaw = await readTextFile(
-    appInfoPath,
-    `webOS wrapper metadata not found at ${appInfoPath}. Expected appinfo.json in the wrapper root.`
-  );
+  let appInfoRaw = "";
+  try {
+    appInfoRaw = await readFile(appInfoPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      const fallbackSource = path.join(distDir, "appinfo.json");
+      const rootSource = path.join(rootDir, "appinfo.json");
+      if (await pathExists(fallbackSource)) {
+        await cp(fallbackSource, appInfoPath);
+      } else if (await pathExists(rootSource)) {
+        await cp(rootSource, appInfoPath);
+      }
+      appInfoRaw = await readTextFile(
+        appInfoPath,
+        `webOS wrapper metadata not found at ${appInfoPath}. Expected appinfo.json in the wrapper root.`
+      );
+    } else {
+      throw error;
+    }
+  }
   const appInfo = JSON.parse(appInfoRaw);
 
-  appInfo.title = appName;
+  appInfo.title = appInfo.title || appName;
   appInfo.version = appVersion;
   appInfo.icon = wrapperIconFiles.webosIcon.target;
   appInfo.largeIcon = wrapperIconFiles.webosLargeIcon.target;
   appInfo.splashBackground = wrapperIconFiles.webosSplash.target;
   appInfo.iconColor = appInfo.iconColor || "#0e0f12";
-  appInfo.services = [webOsServiceId];
+  delete appInfo.services;
   delete appInfo.bgColor;
   delete appInfo.requiredVersion;
   delete appInfo.disableBackHistoryAPI;
@@ -644,7 +660,6 @@ if (platform === "webos") {
   await assertDistExists();
   await syncBuild(targetDir);
   await updateWebOsMetadata(targetDir);
-  await syncWebOsCompanionFiles(targetDir);
   const webOsScriptPath = await resolveBundledWebOsRuntime(targetDir);
   await writeTextFile(path.join(targetDir, "index.html"), buildWebOsIndexHtml({ webOsScriptPath }));
 }
